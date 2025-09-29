@@ -11,29 +11,71 @@ void main() {
 class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      home: SignUpScreen(),
-      debugShowCheckedModeBanner: false,
-    );
+    return MaterialApp(home: SignUpScreen(), debugShowCheckedModeBanner: false);
   }
 }
 
 // ---------------- SIGN UP SCREEN ----------------
-class SignUpScreen extends StatelessWidget {
+class SignUpScreen extends StatefulWidget {
+  @override
+  _SignUpScreenState createState() => _SignUpScreenState();
+}
+
+class _SignUpScreenState extends State<SignUpScreen> {
   final TextEditingController nameController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
-  final TextEditingController countryCodeController =
-      TextEditingController(text: '1'); // Default country code
+  final TextEditingController countryCodeController = TextEditingController(
+    text: '1',
+  ); // Default country code
+
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _nameFocus = FocusNode();
+  final FocusNode _phoneFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _nameFocus.addListener(() => _scrollToFocusedField(_nameFocus));
+    _phoneFocus.addListener(() => _scrollToFocusedField(_phoneFocus));
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _nameFocus.dispose();
+    _phoneFocus.dispose();
+    nameController.dispose();
+    phoneController.dispose();
+    countryCodeController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToFocusedField(FocusNode focusNode) {
+    if (focusNode.hasFocus) {
+      // Small delay to ensure keyboard is fully shown
+      Future.delayed(Duration(milliseconds: 300), () {
+        if (mounted) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent * 0.8, // Scroll to ~80% of available scroll
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xfff0f0f0),
-      body: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 26, vertical: 48),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
+      body: SingleChildScrollView(
+        controller: _scrollController,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 26, vertical: 48),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
             SizedBox(height: 30),
             Center(
               child: Column(
@@ -60,15 +102,16 @@ class SignUpScreen extends StatelessWidget {
                             color: Colors.blue,
                             decoration: TextDecoration.underline,
                           ),
-                          recognizer: TapGestureRecognizer()
-                            ..onTap = () {
-                              Navigator.pushReplacement(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (_) => LoginPage(),
-                                ),
-                              );
-                            },
+                          recognizer:
+                              TapGestureRecognizer()
+                                ..onTap = () {
+                                  Navigator.pushReplacement(
+                                    context,
+                                    MaterialPageRoute(
+                                      builder: (_) => LoginPage(),
+                                    ),
+                                  );
+                                },
                         ),
                       ],
                     ),
@@ -79,23 +122,30 @@ class SignUpScreen extends StatelessWidget {
             SizedBox(height: 48),
 
             // NAME input
-            Text('NAME',
-                style: TextStyle(
-                    letterSpacing: 2,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500)),
+            Text(
+              'NAME',
+              style: TextStyle(
+                letterSpacing: 2,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             SizedBox(height: 8),
             TextField(
               controller: nameController,
+              focusNode: _nameFocus,
               decoration: InputDecoration(
                 hintText: 'Enter your name',
                 filled: true,
                 fillColor: Colors.grey[300],
-                contentPadding:
-                    EdgeInsets.symmetric(vertical: 26, horizontal: 12),
+                contentPadding: EdgeInsets.symmetric(
+                  vertical: 26,
+                  horizontal: 12,
+                ),
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
-                    borderSide: BorderSide.none),
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide.none,
+                ),
               ),
               textAlign: TextAlign.center,
             ),
@@ -103,11 +153,14 @@ class SignUpScreen extends StatelessWidget {
             SizedBox(height: 54),
 
             // PHONE input
-            Text('PHONE NUMBER',
-                style: TextStyle(
-                    letterSpacing: 2,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500)),
+            Text(
+              'PHONE NUMBER',
+              style: TextStyle(
+                letterSpacing: 2,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             SizedBox(height: 8),
             Row(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -117,18 +170,20 @@ class SignUpScreen extends StatelessWidget {
                 Container(
                   width: 60,
                   decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(4)),
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                   child: TextField(
                     controller: countryCodeController,
                     keyboardType: TextInputType.number,
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(3)
+                      LengthLimitingTextInputFormatter(3),
                     ],
                     decoration: InputDecoration(
-                        contentPadding: EdgeInsets.symmetric(vertical: 26),
-                        border: InputBorder.none),
+                      contentPadding: EdgeInsets.symmetric(vertical: 26),
+                      border: InputBorder.none,
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -136,15 +191,19 @@ class SignUpScreen extends StatelessWidget {
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(4)),
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                     child: TextField(
                       controller: phoneController,
+                      focusNode: _phoneFocus,
                       keyboardType: TextInputType.number,
                       inputFormatters: [PhoneNumberFormatter()],
                       decoration: InputDecoration(
-                        contentPadding:
-                            EdgeInsets.symmetric(vertical: 26, horizontal: 12),
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: 26,
+                          horizontal: 12,
+                        ),
                         hintText: '##########',
                         border: InputBorder.none,
                       ),
@@ -154,7 +213,7 @@ class SignUpScreen extends StatelessWidget {
                 ),
               ],
             ),
-            Spacer(),
+            SizedBox(height: 48),
 
             SizedBox(
               width: double.infinity,
@@ -172,18 +231,21 @@ class SignUpScreen extends StatelessWidget {
                     Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => HomeScreen(
-                            name: name,
-                            phone: fullPhone,
-                            countryCode: countryCodeController.text),
+                        builder:
+                            (_) => HomeScreen(
+                              name: name,
+                              phone: fullPhone,
+                              countryCode: countryCodeController.text,
+                            ),
                       ),
                     );
                   } else {
                     // Show an error message (e.g., using a SnackBar)
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
-                        content:
-                            Text('Please enter a valid 10-digit phone number.'),
+                        content: Text(
+                          'Please enter a valid 10-digit phone number.',
+                        ),
                         backgroundColor: Colors.redAccent,
                       ),
                     );
@@ -204,54 +266,111 @@ class SignUpScreen extends StatelessWidget {
           ],
         ),
       ),
+      ),
     );
   }
 }
 
 // ---------------- LOGIN SCREEN ----------------
-class LoginPage extends StatelessWidget {
+class LoginPage extends StatefulWidget {
+  @override
+  _LoginPageState createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
   final TextEditingController nameController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
-  final TextEditingController countryCodeController =
-      TextEditingController(text: '1');
+  final TextEditingController countryCodeController = TextEditingController(
+    text: '1',
+  );
+
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _nameFocus = FocusNode();
+  final FocusNode _phoneFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _nameFocus.addListener(() => _scrollToFocusedField(_nameFocus));
+    _phoneFocus.addListener(() => _scrollToFocusedField(_phoneFocus));
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _nameFocus.dispose();
+    _phoneFocus.dispose();
+    nameController.dispose();
+    phoneController.dispose();
+    countryCodeController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToFocusedField(FocusNode focusNode) {
+    if (focusNode.hasFocus) {
+      // Small delay to ensure keyboard is fully shown
+      Future.delayed(Duration(milliseconds: 300), () {
+        if (mounted) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent * 0.8, // Scroll to ~80% of available scroll
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Color(0xfff0f0f0),
       appBar: AppBar(
-          title: Text('Login', style: TextStyle(color: Color(0xff1c1c1c))),
-          backgroundColor: Color(0xfff0f0f0)),
-      body: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Text('Welcome Back',
-                style: TextStyle(
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.indigo[900])),
+        title: Text('Login', style: TextStyle(color: Color(0xff1c1c1c))),
+        backgroundColor: Color(0xfff0f0f0),
+      ),
+      body: SingleChildScrollView(
+        controller: _scrollController,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+            Text(
+              'Welcome Back',
+              style: TextStyle(
+                fontSize: 24,
+                fontWeight: FontWeight.bold,
+                color: Colors.indigo[900],
+              ),
+            ),
             SizedBox(height: 48),
 
             // NAME input
-            Text('NAME',
-                style: TextStyle(
-                    letterSpacing: 2,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500)),
+            Text(
+              'NAME',
+              style: TextStyle(
+                letterSpacing: 2,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             SizedBox(height: 8),
             TextField(
               controller: nameController,
+              focusNode: _nameFocus,
               decoration: InputDecoration(
                 hintText: 'Enter your name',
                 filled: true,
                 fillColor: Colors.grey[300],
-                contentPadding:
-                    EdgeInsets.symmetric(vertical: 14, horizontal: 12),
+                contentPadding: EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 12,
+                ),
                 border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
-                    borderSide: BorderSide.none),
+                  borderRadius: BorderRadius.circular(4),
+                  borderSide: BorderSide.none,
+                ),
               ),
               textAlign: TextAlign.center,
             ),
@@ -259,11 +378,14 @@ class LoginPage extends StatelessWidget {
             SizedBox(height: 24),
 
             // Phone input
-            Text('PHONE NUMBER',
-                style: TextStyle(
-                    letterSpacing: 2,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500)),
+            Text(
+              'PHONE NUMBER',
+              style: TextStyle(
+                letterSpacing: 2,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             SizedBox(height: 8),
             Row(
               children: [
@@ -272,18 +394,20 @@ class LoginPage extends StatelessWidget {
                 Container(
                   width: 60,
                   decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(4)),
+                    color: Colors.grey[300],
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                   child: TextField(
                     controller: countryCodeController,
                     keyboardType: TextInputType.number,
                     inputFormatters: [
                       FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(3)
+                      LengthLimitingTextInputFormatter(3),
                     ],
                     decoration: InputDecoration(
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(vertical: 14)),
+                      border: InputBorder.none,
+                      contentPadding: EdgeInsets.symmetric(vertical: 14),
+                    ),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -291,17 +415,22 @@ class LoginPage extends StatelessWidget {
                 Expanded(
                   child: Container(
                     decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(4)),
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(4),
+                    ),
                     child: TextField(
                       controller: phoneController,
+                      focusNode: _phoneFocus,
                       keyboardType: TextInputType.number,
                       inputFormatters: [PhoneNumberFormatter()],
                       decoration: InputDecoration(
-                          hintText: '##########',
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(
-                              vertical: 14, horizontal: 12)),
+                        hintText: '##########',
+                        border: InputBorder.none,
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: 14,
+                          horizontal: 12,
+                        ),
+                      ),
                       textAlign: TextAlign.center,
                     ),
                   ),
@@ -309,7 +438,7 @@ class LoginPage extends StatelessWidget {
               ],
             ),
 
-            Spacer(),
+            SizedBox(height: 48),
 
             SizedBox(
               width: double.infinity,
@@ -323,10 +452,11 @@ class LoginPage extends StatelessWidget {
                   Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => CodeVerificationPage(
-                        name: name,
-                        phone: fullPhone,
-                      ),
+                      builder:
+                          (_) => CodeVerificationPage(
+                            name: name,
+                            phone: fullPhone,
+                          ),
                     ),
                   );
                 },
@@ -342,17 +472,56 @@ class LoginPage extends StatelessWidget {
           ],
         ),
       ),
+      ),
     );
   }
 }
 
 // ---------------- CODE VERIFICATION SCREEN ----------------
-class CodeVerificationPage extends StatelessWidget {
+class CodeVerificationPage extends StatefulWidget {
   final String name;
   final String phone;
-  final TextEditingController codeController = TextEditingController();
 
   CodeVerificationPage({required this.name, required this.phone});
+
+  @override
+  _CodeVerificationPageState createState() => _CodeVerificationPageState();
+}
+
+class _CodeVerificationPageState extends State<CodeVerificationPage> {
+  final TextEditingController codeController = TextEditingController();
+
+  final ScrollController _scrollController = ScrollController();
+  final FocusNode _codeFocus = FocusNode();
+
+  @override
+  void initState() {
+    super.initState();
+    _codeFocus.addListener(() => _scrollToFocusedField(_codeFocus));
+  }
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    _codeFocus.dispose();
+    codeController.dispose();
+    super.dispose();
+  }
+
+  void _scrollToFocusedField(FocusNode focusNode) {
+    if (focusNode.hasFocus) {
+      // Small delay to ensure keyboard is fully shown
+      Future.delayed(Duration(milliseconds: 300), () {
+        if (mounted) {
+          _scrollController.animateTo(
+            _scrollController.position.maxScrollExtent * 0.8, // Scroll to ~80% of available scroll
+            duration: Duration(milliseconds: 300),
+            curve: Curves.easeOut,
+          );
+        }
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -363,16 +532,14 @@ class CodeVerificationPage extends StatelessWidget {
         backgroundColor: Color(0xfff0f0f0),
         iconTheme: IconThemeData(color: Color(0xff1c1c1c)),
       ),
-      body: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.security,
-              size: 80,
-              color: Colors.indigo[900],
-            ),
+      body: SingleChildScrollView(
+        controller: _scrollController,
+        child: Padding(
+          padding: EdgeInsets.symmetric(horizontal: 24, vertical: 48),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+            Icon(Icons.security, size: 80, color: Colors.indigo[900]),
             SizedBox(height: 24),
             Text(
               'Verification Code',
@@ -385,10 +552,7 @@ class CodeVerificationPage extends StatelessWidget {
             SizedBox(height: 12),
             Text(
               'We\'ve sent a 6-digit code to',
-              style: TextStyle(
-                fontSize: 16,
-                color: Colors.black54,
-              ),
+              style: TextStyle(fontSize: 16, color: Colors.black54),
               textAlign: TextAlign.center,
             ),
             SizedBox(height: 4),
@@ -430,13 +594,15 @@ class CodeVerificationPage extends StatelessWidget {
                 keyboardType: TextInputType.number,
                 inputFormatters: [
                   FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(6)
+                  LengthLimitingTextInputFormatter(6),
                 ],
                 decoration: InputDecoration(
                   hintText: '• • • • • •',
                   hintStyle: TextStyle(fontSize: 32, letterSpacing: 8),
-                  contentPadding:
-                      EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+                  contentPadding: EdgeInsets.symmetric(
+                    vertical: 20,
+                    horizontal: 16,
+                  ),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                     borderSide: BorderSide.none,
@@ -476,7 +642,7 @@ class CodeVerificationPage extends StatelessWidget {
               ),
             ),
 
-            Spacer(),
+            SizedBox(height: 48),
 
             SizedBox(
               width: double.infinity,
@@ -487,10 +653,12 @@ class CodeVerificationPage extends StatelessWidget {
                     Navigator.pushReplacement(
                       context,
                       MaterialPageRoute(
-                        builder: (_) => HomeScreen(
-                            name: name,
-                            phone: phone,
-                            countryCode: codeController.text),
+                        builder:
+                            (_) => HomeScreen(
+                              name: name,
+                              phone: phone,
+                              countryCode: codeController.text,
+                            ),
                       ),
                     );
                   } else {
@@ -508,12 +676,15 @@ class CodeVerificationPage extends StatelessWidget {
                     borderRadius: BorderRadius.circular(4),
                   ),
                 ),
-                child: Text('Verify & Log in',
-                    style: TextStyle(color: Colors.white)),
+                child: Text(
+                  'Verify & Log in',
+                  style: TextStyle(color: Colors.white),
+                ),
               ),
             ),
           ],
         ),
+      ),
       ),
     );
   }
@@ -523,8 +694,8 @@ http.Response returnJSON() {
   final fakeBody = jsonEncode({
     "documents": [
       {"title": "Sample Doc 1"},
-      {"title": "Sample Doc 2"}
-    ]
+      {"title": "Sample Doc 2"},
+    ],
   });
 
   return http.Response(fakeBody, 200); // Mimics a real HTTP response
@@ -536,12 +707,12 @@ class HomeScreen extends StatefulWidget {
   final String phone;
   final String countryCode;
 
-  const HomeScreen(
-      {Key? key,
-      required this.name,
-      required this.phone,
-      required this.countryCode})
-      : super(key: key);
+  const HomeScreen({
+    Key? key,
+    required this.name,
+    required this.phone,
+    required this.countryCode,
+  }) : super(key: key);
 
   @override
   _HomeScreenState createState() => _HomeScreenState();
@@ -592,17 +763,20 @@ class _HomeScreenState extends State<HomeScreen> {
               // Check again in callback
               Navigator.of(context, rootNavigator: true).pushReplacement(
                 MaterialPageRoute(
-                  builder: (_) => ErrorScreen(
-                    errorMessage:
-                        'Request failed with status: ${response.statusCode}',
-                    onReturnToSignUp: () {
-                      Navigator.of(context, rootNavigator: true)
-                          .pushAndRemoveUntil(
-                        MaterialPageRoute(builder: (_) => SignUpScreen()),
-                        (route) => false,
-                      );
-                    },
-                  ),
+                  builder:
+                      (_) => ErrorScreen(
+                        errorMessage:
+                            'Request failed with status: ${response.statusCode}',
+                        onReturnToSignUp: () {
+                          Navigator.of(
+                            context,
+                            rootNavigator: true,
+                          ).pushAndRemoveUntil(
+                            MaterialPageRoute(builder: (_) => SignUpScreen()),
+                            (route) => false,
+                          );
+                        },
+                      ),
                 ),
               );
             }
@@ -678,12 +852,13 @@ class _HomeScreenState extends State<HomeScreen> {
           ],
         ),
         leading: Builder(
-          builder: (context) => IconButton(
-            icon: Icon(Icons.menu, size: 40, color: Color(0xff133223)),
-            onPressed: () {
-              Scaffold.of(context).openDrawer();
-            },
-          ),
+          builder:
+              (context) => IconButton(
+                icon: Icon(Icons.menu, size: 40, color: Color(0xff133223)),
+                onPressed: () {
+                  Scaffold.of(context).openDrawer();
+                },
+              ),
         ),
         actions: [
           Padding(
@@ -700,8 +875,11 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 IconButton(
-                  icon: Icon(Icons.document_scanner,
-                      size: 40, color: Color(0xff102837)),
+                  icon: Icon(
+                    Icons.document_scanner,
+                    size: 40,
+                    color: Color(0xff102837),
+                  ),
                   onPressed: () {
                     if (mounted) {
                       // Check before navigation
@@ -728,8 +906,9 @@ class _HomeScreenState extends State<HomeScreen> {
             width: 200,
             decoration: BoxDecoration(
               color: Color(0xffc8c8c8),
-              borderRadius:
-                  BorderRadius.circular(16), // Match Material borderRadius
+              borderRadius: BorderRadius.circular(
+                16,
+              ), // Match Material borderRadius
             ),
             child: Stack(
               children: [
@@ -772,11 +951,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (_) => ProfilePage(
-                                name: widget.name,
-                                phone: widget.phone,
-                                countryCode: widget.countryCode,
-                              ),
+                              builder:
+                                  (_) => ProfilePage(
+                                    name: widget.name,
+                                    phone: widget.phone,
+                                    countryCode: widget.countryCode,
+                                  ),
                             ),
                           );
                         }
@@ -792,8 +972,10 @@ class _HomeScreenState extends State<HomeScreen> {
                         debugPrint('Navigating to SignUpScreen...');
                         if (mounted) {
                           // Check before navigation
-                          Navigator.of(context, rootNavigator: true)
-                              .pushAndRemoveUntil(
+                          Navigator.of(
+                            context,
+                            rootNavigator: true,
+                          ).pushAndRemoveUntil(
                             MaterialPageRoute(builder: (_) => SignUpScreen()),
                             (route) => false,
                           );
@@ -807,11 +989,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   top: 8,
                   right: 8,
                   child: IconButton(
-                    icon: Icon(
-                      Icons.close,
-                      color: Color(0xff133233),
-                      size: 20,
-                    ),
+                    icon: Icon(Icons.close, color: Color(0xff133233), size: 20),
                     onPressed: () {
                       Navigator.pop(context);
                     },
@@ -894,9 +1072,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                   Navigator.push(
                                     context,
                                     MaterialPageRoute(
-                                      builder: (_) => DocumentPage(
-                                        title: docTitle,
-                                      ),
+                                      builder:
+                                          (_) => DocumentPage(title: docTitle),
                                     ),
                                   );
                                 }
@@ -904,12 +1081,14 @@ class _HomeScreenState extends State<HomeScreen> {
                             },
                             child: AnimatedContainer(
                               duration: Duration(milliseconds: 150),
-                              transform: Matrix4.identity()
-                                ..scale(isHovered ? 1.05 : 1.0),
+                              transform:
+                                  Matrix4.identity()
+                                    ..scale(isHovered ? 1.05 : 1.0),
                               decoration: BoxDecoration(
-                                color: isHovered
-                                    ? Colors.grey[400]
-                                    : Colors.grey[300],
+                                color:
+                                    isHovered
+                                        ? Colors.grey[400]
+                                        : Colors.grey[300],
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               padding: EdgeInsets.all(12),
@@ -955,7 +1134,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                       overflow: TextOverflow.ellipsis,
                                       textAlign: TextAlign.center,
                                     ),
-                                  ]
+                                  ],
                                 ],
                               ),
                             ),
@@ -1039,9 +1218,10 @@ class DocumentPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-        backgroundColor: Color(0xfff0f0f0),
-        appBar: AppBar(title: Text(title), backgroundColor: Color(0xfff0f0f0)),
-        body: Center(child: Text("This is $title")));
+      backgroundColor: Color(0xfff0f0f0),
+      appBar: AppBar(title: Text(title), backgroundColor: Color(0xfff0f0f0)),
+      body: Center(child: Text("This is $title")),
+    );
   }
 }
 
@@ -1115,8 +1295,11 @@ class ProfilePage extends StatelessWidget {
   final String phone;
   String countryCode;
 
-  ProfilePage(
-      {required this.name, required this.countryCode, required this.phone});
+  ProfilePage({
+    required this.name,
+    required this.countryCode,
+    required this.phone,
+  });
 
   String getCensoredPhone(String phone, String code) {
     final digits = phone.replaceAll(RegExp(r'\D'), '');
@@ -1160,12 +1343,15 @@ class ProfilePage extends StatelessWidget {
             SizedBox(height: 48),
 
             // Name
-            Text('NAME',
-                style: TextStyle(
-                    color: Color(0xff133223),
-                    letterSpacing: 2,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500)),
+            Text(
+              'NAME',
+              style: TextStyle(
+                color: Color(0xff133223),
+                letterSpacing: 2,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             SizedBox(height: 8),
             Container(
               width: double.infinity,
@@ -1177,22 +1363,22 @@ class ProfilePage extends StatelessWidget {
               ),
               child: Text(
                 name,
-                style: TextStyle(
-                  fontSize: 18,
-                  color: Color(0xff133223),
-                ),
+                style: TextStyle(fontSize: 18, color: Color(0xff133223)),
               ),
             ),
 
             SizedBox(height: 54),
 
             // Phone
-            Text('PHONE NUMBER',
-                style: TextStyle(
-                    color: Color(0xff133223),
-                    letterSpacing: 2,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500)),
+            Text(
+              'PHONE NUMBER',
+              style: TextStyle(
+                color: Color(0xff133223),
+                letterSpacing: 2,
+                fontSize: 16,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
             SizedBox(height: 8),
             Container(
               width: double.infinity,
@@ -1204,14 +1390,11 @@ class ProfilePage extends StatelessWidget {
               ),
               child: Text(
                 getCensoredPhone(phone, countryCode),
-                style: TextStyle(
-                  fontSize: 26,
-                  color: Color(0xff133223),
-                ),
+                style: TextStyle(fontSize: 26, color: Color(0xff133223)),
               ),
             ),
 
-            Spacer(),
+            SizedBox(height: 48),
 
             SizedBox(
               width: double.infinity,
@@ -1275,7 +1458,9 @@ class NewDocumentDialog extends StatelessWidget {
 class PhoneNumberFormatter extends TextInputFormatter {
   @override
   TextEditingValue formatEditUpdate(
-      TextEditingValue oldValue, TextEditingValue newValue) {
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
     final digitsOnly = newValue.text.replaceAll(RegExp(r'\D'), '');
     final buffer = StringBuffer();
     for (int i = 0; i < digitsOnly.length && i < 10; i++) {
@@ -1286,7 +1471,8 @@ class PhoneNumberFormatter extends TextInputFormatter {
     }
     final formatted = buffer.toString();
     return TextEditingValue(
-        text: formatted,
-        selection: TextSelection.collapsed(offset: formatted.length));
+      text: formatted,
+      selection: TextSelection.collapsed(offset: formatted.length),
+    );
   }
 }
