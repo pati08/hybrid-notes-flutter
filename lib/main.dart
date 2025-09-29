@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:convert';
+import 'package:fleather/fleather.dart';
 
 void main() {
   runApp(MyApp());
@@ -1210,17 +1211,374 @@ class ErrorScreen extends StatelessWidget {
   }
 }
 
+// ---------------- RESPONSIVE TOOLBAR ----------------
+class ResponsiveFleatherToolbar extends StatelessWidget {
+  final FleatherController controller;
+
+  const ResponsiveFleatherToolbar({
+    Key? key,
+    required this.controller,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Determine if we should show compact toolbar based on screen width
+        // Use a more conservative breakpoint for better mobile experience
+        final isCompact = constraints.maxWidth < 800;
+        
+        if (isCompact) {
+          return CompactToolbar(controller: controller);
+        } else {
+          return FleatherToolbar.basic(controller: controller);
+        }
+      },
+    );
+  }
+}
+
+class CompactToolbar extends StatefulWidget {
+  final FleatherController controller;
+
+  const CompactToolbar({
+    Key? key,
+    required this.controller,
+  }) : super(key: key);
+
+  @override
+  State<CompactToolbar> createState() => _CompactToolbarState();
+}
+
+class _CompactToolbarState extends State<CompactToolbar> {
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.grey[50],
+        border: Border(
+          bottom: BorderSide(color: Colors.grey[300]!, width: 1),
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.05),
+            blurRadius: 2,
+            offset: Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          // First row - Text formatting
+          Container(
+            height: 44,
+            child: Center(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildToolbarButton(
+                      icon: Icons.format_bold,
+                      tooltip: 'Bold',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.bold),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_italic,
+                      tooltip: 'Italic',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.italic),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_underlined,
+                      tooltip: 'Underline',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.underline),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_strikethrough,
+                      tooltip: 'Strikethrough',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.strikethrough),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.integration_instructions,
+                      tooltip: 'Inline Code',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.inlineCode),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.link,
+                      tooltip: 'Add Link',
+                      onPressed: () => _showLinkDialog(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          // Second row - Lists, blocks, and alignment
+          Container(
+            height: 44,
+            decoration: BoxDecoration(
+              border: Border(
+                top: BorderSide(color: Colors.grey[200]!, width: 1),
+              ),
+            ),
+            child: Center(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    _buildToolbarButton(
+                      icon: Icons.format_list_bulleted,
+                      tooltip: 'Bullet List',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.ul),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_list_numbered,
+                      tooltip: 'Numbered List',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.ol),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.checklist,
+                      tooltip: 'Check List',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.cl),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_quote,
+                      tooltip: 'Quote Block',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.bq),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.code,
+                      tooltip: 'Code Block',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.code),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_align_left,
+                      tooltip: 'Align Left',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.left),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_align_center,
+                      tooltip: 'Align Center',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.center),
+                    ),
+                    _buildToolbarButton(
+                      icon: Icons.format_align_right,
+                      tooltip: 'Align Right',
+                      onPressed: () => _toggleFormat(ParchmentAttribute.right),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildToolbarButton({
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 2),
+      child: IconButton(
+        icon: Icon(icon, size: 20),
+        tooltip: tooltip,
+        onPressed: onPressed,
+        style: IconButton.styleFrom(
+          backgroundColor: Colors.transparent,
+          foregroundColor: Colors.black87,
+          minimumSize: Size(36, 36),
+          padding: EdgeInsets.all(6),
+        ),
+      ),
+    );
+  }
+
+  void _toggleFormat(ParchmentAttribute attribute) {
+    final selection = widget.controller.selection;
+    if (selection.isCollapsed) {
+      // Apply format to the current selection or insert at cursor
+      widget.controller.formatSelection(attribute);
+    } else {
+      // Toggle format for selected text
+      widget.controller.formatSelection(attribute);
+    }
+  }
+
+
+  void _showLinkDialog() {
+    final TextEditingController linkController = TextEditingController();
+    
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('Add Link'),
+        content: TextField(
+          controller: linkController,
+          decoration: InputDecoration(
+            hintText: 'Enter URL',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              if (linkController.text.isNotEmpty) {
+                widget.controller.formatSelection(
+                  ParchmentAttribute.link.fromString(linkController.text),
+                );
+              }
+              Navigator.pop(context);
+            },
+            child: Text('Add'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 // ---------------- DOCUMENT & SCAN PAGES ----------------
-class DocumentPage extends StatelessWidget {
+class DocumentPage extends StatefulWidget {
   final String title;
-  DocumentPage({required this.title});
+
+  const DocumentPage({Key? key, required this.title}) : super(key: key);
+
+  @override
+  State<DocumentPage> createState() => _DocumentPageState();
+}
+
+class _DocumentPageState extends State<DocumentPage> {
+  late FleatherController _controller;
+  late TextEditingController _titleController;
+  bool _isEditingTitle = false;
+
+  @override
+  void initState() {
+    super.initState();
+
+    // Start with an empty document (you can also load JSON here)
+    final doc = ParchmentDocument();
+    _controller = FleatherController(document: doc);
+    
+    // Initialize title controller with the current title
+    _titleController = TextEditingController(text: widget.title);
+  }
+
+  @override
+  void dispose() {
+    _titleController.dispose();
+    super.dispose();
+  }
+
+  void _startEditingTitle() {
+    setState(() {
+      _isEditingTitle = true;
+    });
+    // Select all text for easy editing
+    _titleController.selection = TextSelection(
+      baseOffset: 0,
+      extentOffset: _titleController.text.length,
+    );
+  }
+
+  void _saveTitle() {
+    setState(() {
+      _isEditingTitle = false;
+    });
+    // Here you could save the title to a database or local storage
+    // For now, we'll just update the state
+  }
+
+  void _cancelEditingTitle() {
+    setState(() {
+      _isEditingTitle = false;
+      _titleController.text = widget.title; // Reset to original title
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: Color(0xfff0f0f0),
-      appBar: AppBar(title: Text(title), backgroundColor: Color(0xfff0f0f0)),
-      body: Center(child: Text("This is $title")),
+      backgroundColor: const Color(0xfff0f0f0),
+      appBar: AppBar(
+        backgroundColor: const Color(0xfff0f0f0),
+        elevation: 0,
+        leading: IconButton(
+          icon: Icon(Icons.arrow_back, color: Colors.black87),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: _isEditingTitle
+            ? TextField(
+                controller: _titleController,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.black87,
+                ),
+                decoration: InputDecoration(
+                  border: InputBorder.none,
+                  hintText: 'Document title',
+                  hintStyle: TextStyle(color: Colors.grey[600]),
+                ),
+                autofocus: true,
+                onSubmitted: (_) => _saveTitle(),
+                onEditingComplete: _saveTitle,
+              )
+            : Text(
+                _titleController.text.isEmpty ? widget.title : _titleController.text,
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w500,
+                  color: Colors.black87,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+        actions: _isEditingTitle
+            ? [
+                IconButton(
+                  icon: Icon(Icons.check, color: Colors.green[700]),
+                  onPressed: _saveTitle,
+                  tooltip: 'Save title',
+                ),
+                IconButton(
+                  icon: Icon(Icons.close, color: Colors.red[700]),
+                  onPressed: _cancelEditingTitle,
+                  tooltip: 'Cancel',
+                ),
+              ]
+            : [
+                IconButton(
+                  icon: Icon(Icons.edit, color: Colors.grey[700]),
+                  onPressed: _startEditingTitle,
+                  tooltip: 'Edit title',
+                ),
+              ],
+      ),
+      body: Column(
+        children: [
+          // Responsive toolbar for formatting
+          ResponsiveFleatherToolbar(controller: _controller),
+
+          // Editor area
+          Expanded(
+            child: Container(
+              color: Colors.white,
+              padding: const EdgeInsets.all(8.0),
+              child: FleatherEditor(controller: _controller),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
