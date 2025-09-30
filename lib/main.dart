@@ -3,7 +3,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 import 'package:fleather/fleather.dart';
+import 'package:cunning_document_scanner/cunning_document_scanner.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'auth_service.dart';
 
 void main() {
   runApp(MyApp());
@@ -86,7 +92,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     style: TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
-                      color: Colors.indigo[900],
+                      color: Color(0xff102837),
                     ),
                     textAlign: TextAlign.center,
                   ),
@@ -100,7 +106,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         TextSpan(
                           text: 'Log in here.',
                           style: TextStyle(
-                            color: Colors.blue,
+                            color: Color(0xffc3e3ea),
                             decoration: TextDecoration.underline,
                           ),
                           recognizer:
@@ -247,13 +253,13 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         content: Text(
                           'Please enter a valid 10-digit phone number.',
                         ),
-                        backgroundColor: Colors.redAccent,
+                        backgroundColor: Color(0xffbd6051),
                       ),
                     );
                   }
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo[900],
+                  backgroundColor: Color(0xff102837),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4),
                   ),
@@ -342,7 +348,7 @@ class _LoginPageState extends State<LoginPage> {
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: Colors.indigo[900],
+                color: Color(0xff102837),
               ),
             ),
             SizedBox(height: 48),
@@ -445,24 +451,61 @@ class _LoginPageState extends State<LoginPage> {
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   String name = nameController.text.trim();
-                  String fullPhone =
-                      '+${countryCodeController.text}${phoneController.text}';
-
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder:
-                          (_) => CodeVerificationPage(
+                  String rawPhone = phoneController.text;
+                  String digitsOnly = rawPhone.replaceAll(RegExp(r'\D'), '');
+                  
+                  if (digitsOnly.length == 10) {
+                    String fullPhone = '+${countryCodeController.text}$digitsOnly';
+                    
+                    // Show loading indicator
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (context) => Center(
+                        child: CircularProgressIndicator(),
+                      ),
+                    );
+                    
+                    // Call API to send verification code
+                    final authService = AuthService();
+                    final result = await authService.sendPhoneVerification(fullPhone);
+                    
+                    // Hide loading indicator
+                    Navigator.pop(context);
+                    
+                    if (result.success) {
+                      // Navigate to code verification page
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CodeVerificationPage(
                             name: name,
                             phone: fullPhone,
                           ),
-                    ),
-                  );
+                        ),
+                      );
+                    } else {
+                      // Show error message
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result.error ?? 'An error occurred'),
+                          backgroundColor: Color(0xffbd6051),
+                        ),
+                      );
+                    }
+                  } else {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text('Please enter a valid 10-digit phone number.'),
+                        backgroundColor: Color(0xffbd6051),
+                      ),
+                    );
+                  }
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo[900],
+                  backgroundColor: Color(0xff102837),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4),
                   ),
@@ -540,14 +583,14 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-            Icon(Icons.security, size: 80, color: Colors.indigo[900]),
+            Icon(Icons.security, size: 80, color: Color(0xff102837)),
             SizedBox(height: 24),
             Text(
               'Verification Code',
               style: TextStyle(
                 fontSize: 24,
                 fontWeight: FontWeight.bold,
-                color: Colors.indigo[900],
+                color: Color(0xff102837),
               ),
             ),
             SizedBox(height: 12),
@@ -558,11 +601,11 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
             ),
             SizedBox(height: 4),
             Text(
-              phone,
+              widget.phone,
               style: TextStyle(
                 fontSize: 16,
                 fontWeight: FontWeight.bold,
-                color: Colors.indigo[900],
+                color: Color(0xff102837),
               ),
             ),
             SizedBox(height: 48),
@@ -628,7 +671,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
                     content: Text('Verification code sent!'),
-                    backgroundColor: Colors.green,
+                    backgroundColor: Color(0xffc7ffbf),
                     duration: Duration(seconds: 2),
                   ),
                 );
@@ -636,7 +679,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
               child: Text(
                 'Didn\'t receive the code? Resend',
                 style: TextStyle(
-                  color: Colors.blue,
+                  color: Color(0xffc3e3ea),
                   fontSize: 14,
                   decoration: TextDecoration.underline,
                 ),
@@ -656,8 +699,8 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                       MaterialPageRoute(
                         builder:
                             (_) => HomeScreen(
-                              name: name,
-                              phone: phone,
+                              name: widget.name,
+                              phone: widget.phone,
                               countryCode: codeController.text,
                             ),
                       ),
@@ -666,13 +709,13 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
                         content: Text('Please enter a valid 6-digit code'),
-                        backgroundColor: Colors.red,
+                        backgroundColor: Color(0xffbd6051),
                       ),
                     );
                   }
                 },
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.indigo[900],
+                  backgroundColor: Color(0xff102837),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(4),
                   ),
@@ -741,9 +784,9 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
 
-      final url = Uri.parse('https://example.com/api/get-documents');
-
-      final response = returnJSON();
+      // Use AuthService to make authenticated request
+      final authService = AuthService();
+      final response = await authService.makeAuthenticatedRequest('/api/docs/list');
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -814,6 +857,72 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // Example method to upload an attachment
+  Future<void> uploadFileExample(List<int> fileBytes, String fileName) async {
+    try {
+      final authService = AuthService();
+      final result = await authService.uploadAttachment(fileName, fileBytes);
+      
+      if (result.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('File uploaded successfully! Attachment ID: ${result.attachmentId}'),
+            backgroundColor: Color(0xffc7ffbf),
+          ),
+        );
+        // Store attachmentId for later use
+        print('Attachment ID: ${result.attachmentId}');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload failed: ${result.error}'),
+            backgroundColor: Color(0xffbd6051),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Upload error: $e'),
+          backgroundColor: Color(0xffbd6051),
+        ),
+      );
+    }
+  }
+
+  // Example method to download an attachment
+  Future<void> downloadFileExample(String attachmentId) async {
+    try {
+      final authService = AuthService();
+      final result = await authService.downloadAttachment(attachmentId);
+      
+      if (result.success) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('File downloaded successfully! Size: ${result.fileBytes?.length} bytes'),
+            backgroundColor: Color(0xffc7ffbf),
+          ),
+        );
+        // Use result.fileBytes for the downloaded file
+        print('Downloaded file size: ${result.fileBytes?.length} bytes');
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Download failed: ${result.error}'),
+            backgroundColor: Color(0xffbd6051),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Download error: $e'),
+          backgroundColor: Color(0xffbd6051),
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final displayedDocuments = [
@@ -847,9 +956,9 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               )
             else if (apiError != null)
-              Icon(Icons.error_outline, size: 16, color: Colors.red)
+              Icon(Icons.error_outline, size: 16, color: Color(0xffbd6051))
             else
-              Icon(Icons.check_circle_outline, size: 16, color: Colors.green),
+              Icon(Icons.check_circle_outline, size: 16, color: Color(0xffc7ffbf)),
           ],
         ),
         leading: Builder(
@@ -1013,18 +1122,18 @@ class _HomeScreenState extends State<HomeScreen> {
                   padding: EdgeInsets.all(12),
                   margin: EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
-                    color: Colors.red[100],
+                    color: Color(0xffbd6051).withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red[300]!),
+                    border: Border.all(color: Color(0xffbd6051).withOpacity(0.3)),
                   ),
                   child: Row(
                     children: [
-                      Icon(Icons.error, color: Colors.red),
+                      Icon(Icons.error, color: Color(0xffbd6051)),
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
                           apiError!,
-                          style: TextStyle(color: Colors.red[700]),
+                          style: TextStyle(color: Color(0xffbd6051)),
                         ),
                       ),
                       TextButton(
@@ -1088,8 +1197,8 @@ class _HomeScreenState extends State<HomeScreen> {
                               decoration: BoxDecoration(
                                 color:
                                     isHovered
-                                        ? Colors.grey[400]
-                                        : Colors.grey[300],
+                                        ? Color(0xffc3e3ea)
+                                        : Color(0xfff0f0f0),
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               padding: EdgeInsets.all(12),
@@ -1174,13 +1283,13 @@ class ErrorScreen extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.error_outline, color: Colors.red, size: 80),
+              Icon(Icons.error_outline, color: Color(0xffbd6051), size: 80),
               SizedBox(height: 16),
               Text(
                 errorMessage,
                 style: TextStyle(
                   fontSize: 18,
-                  color: Colors.red[700],
+                  color: Color(0xffbd6051),
                   fontWeight: FontWeight.bold,
                 ),
                 textAlign: TextAlign.center,
@@ -1256,9 +1365,9 @@ class _CompactToolbarState extends State<CompactToolbar> {
   Widget build(BuildContext context) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.grey[50],
+        color: Color(0xfffafafa),
         border: Border(
-          bottom: BorderSide(color: Colors.grey[300]!, width: 1),
+          bottom: BorderSide(color: Color(0xffc3e3ea), width: 1),
         ),
         boxShadow: [
           BoxShadow(
@@ -1309,6 +1418,11 @@ class _CompactToolbarState extends State<CompactToolbar> {
                       tooltip: 'Add Link',
                       onPressed: () => _showLinkDialog(),
                     ),
+                    _buildToolbarButton(
+                      icon: Icons.image,
+                      tooltip: 'Upload Image',
+                      onPressed: () => _uploadImage(),
+                    ),
                   ],
                 ),
               ),
@@ -1319,7 +1433,7 @@ class _CompactToolbarState extends State<CompactToolbar> {
             height: 44,
             decoration: BoxDecoration(
               border: Border(
-                top: BorderSide(color: Colors.grey[200]!, width: 1),
+                top: BorderSide(color: Color(0xffc3e3ea), width: 1),
               ),
             ),
             child: Center(
@@ -1391,7 +1505,7 @@ class _CompactToolbarState extends State<CompactToolbar> {
         onPressed: onPressed,
         style: IconButton.styleFrom(
           backgroundColor: Colors.transparent,
-          foregroundColor: Colors.black87,
+          foregroundColor: Color(0xff102837),
           minimumSize: Size(36, 36),
           padding: EdgeInsets.all(6),
         ),
@@ -1444,6 +1558,69 @@ class _CompactToolbarState extends State<CompactToolbar> {
         ],
       ),
     );
+  }
+
+  void _uploadImage() async {
+    try {
+      final ImagePicker picker = ImagePicker();
+      final XFile? image = await picker.pickImage(source: ImageSource.gallery);
+      
+      if (image != null) {
+        // Show loading dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => Center(
+            child: CircularProgressIndicator(),
+          ),
+        );
+        
+        // Read image bytes
+        final File imageFile = File(image.path);
+        final List<int> imageBytes = await imageFile.readAsBytes();
+        
+        // Upload image
+        final authService = AuthService();
+        final result = await authService.uploadAttachment(image.name, imageBytes);
+        
+        // Hide loading dialog
+        Navigator.pop(context);
+        
+        if (result.success) {
+          // Store the attachment ID for this document
+          await _storeImageAttachmentId(result.attachmentId!);
+          
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Image uploaded successfully!'),
+              backgroundColor: Color(0xffc7ffbf),
+            ),
+          );
+        } else {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Upload failed: ${result.error}'),
+              backgroundColor: Color(0xffbd6051),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error picking image: $e'),
+          backgroundColor: Color(0xffbd6051),
+        ),
+      );
+    }
+  }
+
+  Future<void> _storeImageAttachmentId(String attachmentId) async {
+    // Store attachment ID in SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    final List<String> imageIds = prefs.getStringList('document_images') ?? [];
+    imageIds.add(attachmentId);
+    await prefs.setStringList('document_images', imageIds);
   }
 }
 
@@ -1546,17 +1723,27 @@ class _DocumentPageState extends State<DocumentPage> {
         actions: _isEditingTitle
             ? [
                 IconButton(
-                  icon: Icon(Icons.check, color: Colors.green[700]),
+                  icon: Icon(Icons.check, color: Color(0xffc7ffbf)),
                   onPressed: _saveTitle,
                   tooltip: 'Save title',
                 ),
                 IconButton(
-                  icon: Icon(Icons.close, color: Colors.red[700]),
+                  icon: Icon(Icons.close, color: Color(0xffbd6051)),
                   onPressed: _cancelEditingTitle,
                   tooltip: 'Cancel',
                 ),
               ]
             : [
+                IconButton(
+                  icon: Icon(Icons.image, color: Colors.grey[700]),
+                  onPressed: () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(builder: (_) => ImagesPage()),
+                    );
+                  },
+                  tooltip: 'View Images',
+                ),
                 IconButton(
                   icon: Icon(Icons.edit, color: Colors.grey[700]),
                   onPressed: _startEditingTitle,
@@ -1572,7 +1759,7 @@ class _DocumentPageState extends State<DocumentPage> {
           // Editor area
           Expanded(
             child: Container(
-              color: Colors.white,
+              color: Color(0xfffafafa),
               padding: const EdgeInsets.all(8.0),
               child: FleatherEditor(controller: _controller),
             ),
@@ -1583,8 +1770,15 @@ class _DocumentPageState extends State<DocumentPage> {
   }
 }
 
-class ScanPage extends StatelessWidget {
+class ScanPage extends StatefulWidget {
   const ScanPage({super.key});
+
+  @override
+  State<ScanPage> createState() => _ScanPageState();
+}
+
+class _ScanPageState extends State<ScanPage> {
+  final List<Uint8List> _capturedPages = [];
 
   @override
   Widget build(BuildContext context) {
@@ -1596,54 +1790,99 @@ class ScanPage extends StatelessWidget {
         elevation: 0,
         centerTitle: true,
       ),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            const Text(
-              "Align your document within the frame below",
-              style: TextStyle(fontSize: 16, color: Colors.black54),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            Expanded(
-              child: Container(
-                width: double.infinity,
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  border: Border.all(color: Colors.grey.shade400, width: 2),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Center(
-                  child: Text(
-                    "📄 Document Preview\n(Scanner placeholder)",
-                    style: TextStyle(color: Colors.black38),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
+      body: Column(
+        children: [
+          // Embedded scanner takes the available top space
+          Expanded(
+            flex: 3,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black,
               ),
+              child: _buildScanner(),
             ),
-            const SizedBox(height: 20),
-            ElevatedButton.icon(
-              onPressed: () {
-                // TODO: Replace this with actual scanner functionality
-                print("Scan button pressed!");
-              },
-              icon: const Icon(Icons.camera_alt),
-              label: const Text("Scan Document"),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
-                foregroundColor: Colors.white,
-                minimumSize: const Size.fromHeight(50),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(10),
-                ),
+          ),
+          // Captured pages list below current page of text
+          Expanded(
+            flex: 2,
+            child: Container(
+              width: double.infinity,
+              decoration: BoxDecoration(
+                color: Color(0xfffafafa),
+                border: Border(top: BorderSide(color: Color(0xffc3e3ea), width: 1)),
               ),
+              child: _capturedPages.isEmpty
+                  ? Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Text(
+                          'Scanned pages will appear here',
+                          style: TextStyle(color: Colors.black54),
+                        ),
+                      ),
+                    )
+                  : ListView.separated(
+                      padding: const EdgeInsets.all(12),
+                      scrollDirection: Axis.horizontal,
+                      itemBuilder: (context, index) {
+                        final bytes = _capturedPages[index];
+                        return ClipRRect(
+                          borderRadius: BorderRadius.circular(8),
+                          child: Image.memory(bytes, height: 160),
+                        );
+                      },
+                      separatorBuilder: (_, __) => const SizedBox(width: 12),
+                      itemCount: _capturedPages.length,
+                    ),
             ),
-          ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildScanner() {
+    // cunning_document_scanner does not provide an embedded preview widget.
+    // We launch the native scanner and then display results below.
+    return Center(
+      child: ElevatedButton.icon(
+        onPressed: _startScan,
+        icon: const Icon(Icons.document_scanner),
+        label: const Text('Start scanner'),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xffc3e3ea),
+          foregroundColor: const Color(0xff102837),
         ),
       ),
     );
+  }
+
+  Future<void> _startScan() async {
+    try {
+      final List<String>? images = await CunningDocumentScanner.getPictures();
+      if (images == null) return; // user cancelled
+      final collected = <Uint8List>[];
+      for (final path in images) {
+        final f = File(path);
+        if (await f.exists()) {
+          collected.add(await f.readAsBytes());
+        }
+      }
+      if (!mounted) return;
+      setState(() {
+        _capturedPages
+          ..clear()
+          ..addAll(collected);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Scanner error: $e'),
+          backgroundColor: const Color(0xffbd6051),
+        ),
+      );
+    }
   }
 }
 
@@ -1781,6 +2020,169 @@ class ProfilePage extends StatelessWidget {
           ],
         ),
       ),
+    );
+  }
+}
+
+// ---------------- IMAGES PAGE ----------------
+class ImagesPage extends StatefulWidget {
+  @override
+  _ImagesPageState createState() => _ImagesPageState();
+}
+
+class _ImagesPageState extends State<ImagesPage> {
+  List<String> imageAttachmentIds = [];
+  Map<String, Uint8List> cachedImages = {};
+  bool isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImageAttachmentIds();
+  }
+
+  Future<void> _loadImageAttachmentIds() async {
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final List<String> ids = prefs.getStringList('document_images') ?? [];
+      
+      setState(() {
+        imageAttachmentIds = ids;
+      });
+
+      // Load images
+      await _loadImages();
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Error loading images: $e'),
+          backgroundColor: Color(0xffbd6051),
+        ),
+      );
+    } finally {
+      setState(() {
+        isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _loadImages() async {
+    final authService = AuthService();
+    
+    for (String attachmentId in imageAttachmentIds) {
+      if (!cachedImages.containsKey(attachmentId)) {
+        try {
+          final result = await authService.downloadAttachment(attachmentId);
+          if (result.success && result.fileBytes != null) {
+            setState(() {
+              cachedImages[attachmentId] = Uint8List.fromList(result.fileBytes!);
+            });
+          }
+        } catch (e) {
+          print('Error loading image $attachmentId: $e');
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: Color(0xfff0f0f0),
+      appBar: AppBar(
+        title: Text('Uploaded Images', style: TextStyle(color: Color(0xff1c1c1c))),
+        backgroundColor: Color(0xfff0f0f0),
+        iconTheme: IconThemeData(color: Color(0xff1c1c1c)),
+        elevation: 0,
+      ),
+      body: isLoading
+          ? Center(child: CircularProgressIndicator())
+          : imageAttachmentIds.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.image_not_supported, size: 80, color: Colors.grey),
+                      SizedBox(height: 16),
+                      Text(
+                        'No images uploaded yet',
+                        style: TextStyle(
+                          fontSize: 18,
+                          color: Colors.grey[600],
+                        ),
+                      ),
+                      SizedBox(height: 8),
+                      Text(
+                        'Use the image button in the toolbar to upload images',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey[500],
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
+              : Padding(
+                  padding: EdgeInsets.all(16),
+                  child: GridView.builder(
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: 2,
+                      mainAxisSpacing: 16,
+                      crossAxisSpacing: 16,
+                      childAspectRatio: 1,
+                    ),
+                    itemCount: imageAttachmentIds.length,
+                    itemBuilder: (context, index) {
+                      final attachmentId = imageAttachmentIds[index];
+                      final imageBytes = cachedImages[attachmentId];
+                      
+                      return Container(
+                        decoration: BoxDecoration(
+                          borderRadius: BorderRadius.circular(12),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              spreadRadius: 1,
+                              blurRadius: 8,
+                              offset: Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(12),
+                          child: imageBytes != null
+                              ? Image.memory(
+                                  imageBytes,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (context, error, stackTrace) {
+                                    return Container(
+                                      color: Colors.grey[300],
+                                      child: Column(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          Icon(Icons.error, color: Colors.red),
+                                          Text('Error loading image'),
+                                        ],
+                                      ),
+                                    );
+                                  },
+                                )
+                              : Container(
+                                  color: Colors.grey[300],
+                                  child: Center(
+                                    child: CircularProgressIndicator(),
+                                  ),
+                                ),
+                        ),
+                      );
+                    },
+                  ),
+                ),
     );
   }
 }
