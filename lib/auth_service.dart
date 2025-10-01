@@ -42,11 +42,11 @@ class AuthService {
       final response = await http.post(
         url,
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: jsonEncode({
-          'phone': phoneNumber,
-        }),
+        body: {
+          'phone_number': phoneNumber,
+        },
       );
 
       return _handleResponse(response);
@@ -66,12 +66,12 @@ class AuthService {
       final response = await http.post(
         url,
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/x-www-form-urlencoded',
         },
-        body: jsonEncode({
-          'phone': phoneNumber,
+        body: {
+          'phone_number': phoneNumber,
           'code': code,
-        }),
+        },
       );
 
       final result = _handleResponse(response);
@@ -120,11 +120,27 @@ class AuthService {
   }
 
   // Upload attachment
-  Future<AttachmentUploadResult> uploadAttachment(String filePath, List<int> fileBytes) async {
+  Future<AttachmentUploadResult> uploadAttachment(String filename, List<int> fileBytes) async {
     try {
+      // Determine content type from filename
+      String contentType = 'application/octet-stream';
+      if (filename.toLowerCase().endsWith('.jpg') || filename.toLowerCase().endsWith('.jpeg')) {
+        contentType = 'image/jpeg';
+      } else if (filename.toLowerCase().endsWith('.png')) {
+        contentType = 'image/png';
+      } else if (filename.toLowerCase().endsWith('.pdf')) {
+        contentType = 'application/pdf';
+      }
+      
       // Step 1: Get upload URL from server
-      final url = Uri.parse('$_baseUrl/api/attachments/upload');
-      final response = await makeAuthenticatedRequest('/api/attachments/upload', method: 'POST');
+      final response = await makeAuthenticatedRequest(
+        '/api/attachments/upload',
+        method: 'POST',
+        body: {
+          'filename': filename,
+          'content_type': contentType,
+        },
+      );
       
       if (response.statusCode != 200) {
         return AttachmentUploadResult(
@@ -206,7 +222,26 @@ class AuthService {
 
   // Handle API response
   AuthResult _handleResponse(http.Response response) {
+    // For successful responses, empty body is OK (like /auth/start)
+    if (response.statusCode == 200 && response.body.isEmpty) {
+      return AuthResult(
+        success: true,
+        message: 'Success',
+        statusCode: response.statusCode,
+      );
+    }
+    
+    // For error responses, empty body is a problem
+    if (response.body.isEmpty) {
+      return AuthResult(
+        success: false,
+        error: 'Server returned empty response. Status: ${response.statusCode}',
+        statusCode: response.statusCode,
+      );
+    }
+
     try {
+      // Try to decode JSON
       final data = jsonDecode(response.body);
       
       switch (response.statusCode) {
@@ -220,28 +255,44 @@ class AuthService {
         case 400:
           return AuthResult(
             success: false,
-            error: 'Formatted number wrong (my fault)',
+            error: data['error'] ?? 'Formatted number wrong (my fault)',
             statusCode: response.statusCode,
           );
         case 401:
           return AuthResult(
             success: false,
-            error: 'They gave wrong code. Ask for right code again.',
+            error: data['error'] ?? 'They gave wrong code. Ask for right code again.',
             statusCode: response.statusCode,
           );
         case 500:
           return AuthResult(
             success: false,
-            error: 'Server error, something went wrong',
+            error: data['error'] ?? 'Server error, something went wrong',
             statusCode: response.statusCode,
           );
         default:
           return AuthResult(
             success: false,
-            error: 'Unexpected error occurred',
+            error: data['error'] ?? 'Unexpected error occurred (${response.statusCode})',
             statusCode: response.statusCode,
           );
       }
+    } on FormatException catch (e) {
+      // JSON parsing failed - for 200 responses, treat as success if body is empty
+      if (response.statusCode == 200) {
+        return AuthResult(
+          success: true,
+          message: 'Success',
+          statusCode: response.statusCode,
+        );
+      }
+      
+      // For errors, show the response
+      return AuthResult(
+        success: false,
+        error: 'Server error: Invalid response format (Status ${response.statusCode}). Response: ${response.body.substring(0, response.body.length > 100 ? 100 : response.body.length)}',
+        statusCode: response.statusCode,
+      );
     } catch (e) {
       return AuthResult(
         success: false,

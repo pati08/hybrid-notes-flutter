@@ -226,7 +226,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   String name = nameController.text.trim();
                   String rawPhone = phoneController.text;
                   String digitsOnly = rawPhone.replaceAll(RegExp(r'\D'), '');
@@ -235,17 +235,42 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     String fullPhone =
                         '+${countryCodeController.text}$digitsOnly';
 
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (_) => HomeScreen(
-                              name: name,
-                              phone: fullPhone,
-                              countryCode: countryCodeController.text,
-                            ),
+                    // Show loading indicator
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (context) => Center(
+                        child: CircularProgressIndicator(),
                       ),
                     );
+                    
+                    // Call API to send verification code
+                    final authService = AuthService();
+                    final result = await authService.sendPhoneVerification(fullPhone);
+                    
+                    // Hide loading indicator
+                    Navigator.pop(context);
+                    
+                    if (result.success) {
+                      // Navigate to code verification page
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => CodeVerificationPage(
+                            name: name,
+                            phone: fullPhone,
+                          ),
+                        ),
+                      );
+                    } else {
+                      // Show error message
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result.error ?? 'An error occurred'),
+                          backgroundColor: Color(0xffbd6051),
+                        ),
+                      );
+                    }
                   } else {
                     // Show an error message (e.g., using a SnackBar)
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -666,15 +691,40 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
 
             // Resend code option
             TextButton(
-              onPressed: () {
-                // Simulate resending code
-                ScaffoldMessenger.of(context).showSnackBar(
-                  SnackBar(
-                    content: Text('Verification code sent!'),
-                    backgroundColor: Color(0xffc7ffbf),
-                    duration: Duration(seconds: 2),
+              onPressed: () async {
+                // Show loading indicator
+                showDialog(
+                  context: context,
+                  barrierDismissible: false,
+                  builder: (context) => Center(
+                    child: CircularProgressIndicator(),
                   ),
                 );
+                
+                // Call API to resend verification code
+                final authService = AuthService();
+                final result = await authService.sendPhoneVerification(widget.phone);
+                
+                // Hide loading indicator
+                Navigator.pop(context);
+                
+                if (result.success) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text('Verification code sent!'),
+                      backgroundColor: Color(0xffc7ffbf),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                } else {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(
+                      content: Text(result.error ?? 'Failed to resend code'),
+                      backgroundColor: Color(0xffbd6051),
+                      duration: Duration(seconds: 2),
+                    ),
+                  );
+                }
               },
               child: Text(
                 'Didn\'t receive the code? Resend',
@@ -692,19 +742,53 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
               width: double.infinity,
               height: 50,
               child: ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
                   if (codeController.text.length == 6) {
-                    Navigator.pushReplacement(
-                      context,
-                      MaterialPageRoute(
-                        builder:
-                            (_) => HomeScreen(
-                              name: widget.name,
-                              phone: widget.phone,
-                              countryCode: codeController.text,
-                            ),
+                    // Show loading indicator
+                    showDialog(
+                      context: context,
+                      barrierDismissible: false,
+                      builder: (context) => Center(
+                        child: CircularProgressIndicator(),
                       ),
                     );
+                    
+                    // Call API to verify code
+                    final authService = AuthService();
+                    final result = await authService.verifyCode(
+                      widget.phone,
+                      codeController.text,
+                    );
+                    
+                    // Hide loading indicator
+                    Navigator.pop(context);
+                    
+                    if (result.success) {
+                      // Token is already stored by AuthService
+                      // Extract country code from phone number
+                      String countryCode = widget.phone.substring(1, widget.phone.length - 10);
+                      
+                      // Navigate to home screen
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder:
+                              (_) => HomeScreen(
+                                name: widget.name,
+                                phone: widget.phone,
+                                countryCode: countryCode,
+                              ),
+                        ),
+                      );
+                    } else {
+                      // Show error message
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(result.error ?? 'Verification failed'),
+                          backgroundColor: Color(0xffbd6051),
+                        ),
+                      );
+                    }
                   } else {
                     ScaffoldMessenger.of(context).showSnackBar(
                       SnackBar(
@@ -766,7 +850,7 @@ class _HomeScreenState extends State<HomeScreen> {
   List<Map<String, String>> documents = []; // user-created documents
   bool isLoadingDocuments = true;
   String? apiError;
-  Map<String, dynamic>? apiResponseData;
+  List<dynamic>? apiDocumentsList;
 
   @override
   void initState() {
@@ -793,7 +877,17 @@ class _HomeScreenState extends State<HomeScreen> {
         if (mounted) {
           // Check before setState
           setState(() {
-            apiResponseData = data;
+            // API returns an array of DocumentMetadata
+            if (data is List) {
+              apiDocumentsList = data;
+              // Optionally populate the documents list from API data
+              documents = data.map((doc) {
+                return {
+                  'id': doc['id']?.toString() ?? '',
+                  'title': doc['name']?.toString() ?? 'Untitled',
+                };
+              }).toList().cast<Map<String, String>>();
+            }
             isLoadingDocuments = false;
           });
         }
@@ -1078,8 +1172,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         'Log Out',
                         style: TextStyle(color: Color(0xff1c1c1c)),
                       ),
-                      onTap: () {
-                        debugPrint('Navigating to SignUpScreen...');
+                      onTap: () async {
+                        debugPrint('Logging out...');
+                        // Clear authentication token
+                        final authService = AuthService();
+                        await authService.clearToken();
+                        
                         if (mounted) {
                           // Check before navigation
                           Navigator.of(
@@ -1296,7 +1394,11 @@ class ErrorScreen extends StatelessWidget {
               ),
               SizedBox(height: 24),
               ElevatedButton(
-                onPressed: () {
+                onPressed: () async {
+                  // Clear authentication token on error return
+                  final authService = AuthService();
+                  await authService.clearToken();
+                  
                   Navigator.pushAndRemoveUntil(
                     context,
                     MaterialPageRoute(builder: (_) => SignUpScreen()),
@@ -1997,7 +2099,11 @@ class ProfilePage extends StatelessWidget {
               width: double.infinity,
               height: 50,
               child: ElevatedButton.icon(
-                onPressed: () {
+                onPressed: () async {
+                  // Clear authentication token
+                  final authService = AuthService();
+                  await authService.clearToken();
+                  
                   Navigator.pushAndRemoveUntil(
                     context,
                     MaterialPageRoute(builder: (_) => SignUpScreen()),
