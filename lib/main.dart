@@ -13,6 +13,7 @@ import 'auth_service.dart';
 import 'models/document_page_data.dart';
 import 'services/image_cache_service.dart';
 import 'widgets/page_viewer_widget.dart';
+import 'widgets/image_drawing_screen.dart';
 
 void main() {
   runApp(const MyApp());
@@ -234,7 +235,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     horizontal: 12,
                   ),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.zero,
                     borderSide: BorderSide.none,
                   ),
                 ),
@@ -262,7 +263,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     width: 60,
                     decoration: BoxDecoration(
                       color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.zero,
                     ),
                     child: TextField(
                       controller: countryCodeController,
@@ -283,7 +284,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.zero,
                       ),
                       child: TextField(
                         controller: phoneController,
@@ -371,7 +372,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff102837),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.zero,
                     ),
                   ),
                   child: const Text(
@@ -488,7 +489,7 @@ class _LoginPageState extends State<LoginPage> {
                     horizontal: 12,
                   ),
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.zero,
                     borderSide: BorderSide.none,
                   ),
                 ),
@@ -515,7 +516,7 @@ class _LoginPageState extends State<LoginPage> {
                     width: 60,
                     decoration: BoxDecoration(
                       color: Colors.grey[300],
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.zero,
                     ),
                     child: TextField(
                       controller: countryCodeController,
@@ -536,7 +537,7 @@ class _LoginPageState extends State<LoginPage> {
                     child: Container(
                       decoration: BoxDecoration(
                         color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(4),
+                        borderRadius: BorderRadius.zero,
                       ),
                       child: TextField(
                         controller: phoneController,
@@ -623,7 +624,7 @@ class _LoginPageState extends State<LoginPage> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff102837),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.zero,
                     ),
                   ),
                   child: const Text('Continue',
@@ -743,7 +744,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
               Container(
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.zero,
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black.withOpacity(0.1),
@@ -768,7 +769,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                       horizontal: 16,
                     ),
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.zero,
                       borderSide: BorderSide.none,
                     ),
                   ),
@@ -898,7 +899,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff102837),
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(4),
+                      borderRadius: BorderRadius.zero,
                     ),
                   ),
                   child: const Text(
@@ -1262,7 +1263,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                   height: 48,
                   decoration: BoxDecoration(
                     color: const Color(0xffc3e3ea),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.zero,
                   ),
                 ),
                 IconButton(
@@ -1283,15 +1284,13 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         alignment: Alignment.center,
         child: Material(
           elevation: 16,
-          borderRadius: BorderRadius.circular(16), // Rounded edges
+          borderRadius: BorderRadius.zero, // Sharp edges
           child: Container(
             height: MediaQuery.of(context).size.height * 0.45,
             width: 200,
             decoration: BoxDecoration(
               color: const Color(0xffc8c8c8),
-              borderRadius: BorderRadius.circular(
-                16,
-              ), // Match Material borderRadius
+              borderRadius: BorderRadius.zero, // Sharp edges
             ),
             child: Stack(
               children: [
@@ -1301,10 +1300,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                     const DrawerHeader(
                       decoration: BoxDecoration(
                         color: Color(0xffcccccc),
-                        borderRadius: BorderRadius.only(
-                          topLeft: Radius.circular(16),
-                          topRight: Radius.circular(16),
-                        ),
+                        borderRadius: BorderRadius.zero,
                       ),
                       child: Center(
                         child: Padding(
@@ -1403,7 +1399,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                   margin: const EdgeInsets.only(bottom: 16),
                   decoration: BoxDecoration(
                     color: const Color(0xffbd6051).withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(8),
+                    borderRadius: BorderRadius.zero,
                     border: Border.all(
                         color: const Color(0xffbd6051).withOpacity(0.3)),
                   ),
@@ -1484,7 +1480,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                                 color: isHovered
                                     ? const Color(0xffc3e3ea)
                                     : const Color(0xfff0f0f0),
-                                borderRadius: BorderRadius.circular(8),
+                                borderRadius: BorderRadius.zero,
                               ),
                               padding: const EdgeInsets.all(12),
                               child: Column(
@@ -1823,6 +1819,9 @@ class _CompactToolbarState extends State<CompactToolbar> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
+        ),
         title: const Text('Add Link'),
         content: TextField(
           controller: linkController,
@@ -2443,6 +2442,94 @@ class _DocumentPageState extends State<DocumentPage> {
     _saveDocument(showFeedback: false);
   }
 
+  Future<void> _drawOnImage(int index) async {
+    final page = _pages[index];
+    if (page.type != 'ImagePage' || page.imageBytes == null) {
+      return;
+    }
+
+    // Navigate to drawing screen
+    final result = await Navigator.push<Uint8List>(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ImageDrawingScreen(
+          imageBytes: page.imageBytes!,
+          currentAttachmentId: page.imageUrl,
+        ),
+      ),
+    );
+
+    // If user saved the drawing, upload it and replace the current page
+    if (result != null) {
+      try {
+        // Show loading dialog
+        showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => const Center(
+            child: CircularProgressIndicator(),
+          ),
+        );
+
+        // Upload the drawn image
+        final authService = AuthService();
+        final filename = 'drawn_${DateTime.now().millisecondsSinceEpoch}.png';
+        final uploadResult = await authService.uploadAttachment(
+          filename,
+          result.toList(),
+        );
+
+        // Hide loading dialog
+        Navigator.pop(context);
+
+        if (uploadResult.success && uploadResult.attachmentId != null) {
+          // Replace the current page with the new image
+          setState(() {
+            _pages[index] = DocumentPageData.image(
+              imageUrl: uploadResult.attachmentId,
+              imageBytes: result,
+            );
+          });
+
+          // Auto-save after updating image
+          _saveDocument(showFeedback: false);
+
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('Drawing saved successfully'),
+                backgroundColor: Color(0xffc7ffbf),
+              ),
+            );
+          }
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('Upload failed: ${uploadResult.error}'),
+                backgroundColor: const Color(0xffbd6051),
+              ),
+            );
+          }
+        }
+      } catch (e) {
+        // Hide loading dialog if still showing
+        if (mounted && Navigator.canPop(context)) {
+          Navigator.pop(context);
+        }
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error saving drawing: $e'),
+              backgroundColor: const Color(0xffbd6051),
+            ),
+          );
+        }
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -2687,6 +2774,14 @@ class _DocumentPageState extends State<DocumentPage> {
                 ),
                 Row(
                   children: [
+                    // Show draw button only for image pages
+                    if (_pages[_currentPageIndex].type == 'ImagePage' &&
+                        _pages[_currentPageIndex].imageBytes != null)
+                      IconButton(
+                        icon: const Icon(Icons.draw, color: Color(0xff4a90e2)),
+                        onPressed: () => _drawOnImage(_currentPageIndex),
+                        tooltip: 'Draw on Image',
+                      ),
                     if (_pages.length > 1)
                       IconButton(
                         icon:
@@ -2807,7 +2902,7 @@ class _ScannedDocumentOptionsPageState
                       separatorBuilder: (_, __) => const SizedBox(width: 12),
                       itemBuilder: (context, index) {
                         return ClipRRect(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.zero,
                           child: Image.memory(
                             widget.scannedImages[index],
                             height: 120,
@@ -2844,7 +2939,7 @@ class _ScannedDocumentOptionsPageState
                         color: _selectedOption == 'new'
                             ? const Color(0xffc3e3ea)
                             : const Color(0xfffafafa),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.zero,
                         border: Border.all(
                           color: _selectedOption == 'new'
                               ? const Color(0xff102837)
@@ -2898,7 +2993,7 @@ class _ScannedDocumentOptionsPageState
                         labelText: 'Document Title',
                         hintText: 'Enter a title for your document',
                         border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.zero,
                         ),
                         filled: true,
                         fillColor: const Color(0xfffafafa),
@@ -2921,7 +3016,7 @@ class _ScannedDocumentOptionsPageState
                         color: _selectedOption == 'existing'
                             ? const Color(0xffc3e3ea)
                             : const Color(0xfffafafa),
-                        borderRadius: BorderRadius.circular(8),
+                        borderRadius: BorderRadius.zero,
                         border: Border.all(
                           color: _selectedOption == 'existing'
                               ? const Color(0xff102837)
@@ -2974,7 +3069,7 @@ class _ScannedDocumentOptionsPageState
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
                           color: const Color(0xfffafafa),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.zero,
                         ),
                         child: Text(
                           'No existing documents found. Create a new document instead.',
@@ -2987,7 +3082,7 @@ class _ScannedDocumentOptionsPageState
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         decoration: BoxDecoration(
                           color: const Color(0xfffafafa),
-                          borderRadius: BorderRadius.circular(8),
+                          borderRadius: BorderRadius.zero,
                           border: Border.all(color: const Color(0xffc3e3ea)),
                         ),
                         child: DropdownButton<String>(
@@ -3021,8 +3116,8 @@ class _ScannedDocumentOptionsPageState
                         backgroundColor: const Color(0xffc3e3ea),
                         foregroundColor: const Color(0xff102837),
                         padding: const EdgeInsets.symmetric(vertical: 16),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
+                        shape: const RoundedRectangleBorder(
+                          borderRadius: BorderRadius.zero,
                         ),
                         disabledBackgroundColor:
                             const Color(0xffc3e3ea).withOpacity(0.5),
@@ -3223,7 +3318,7 @@ class ProfilePage extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: const Color(0xffc7ffbf),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.zero,
               ),
               child: Text(
                 name,
@@ -3250,7 +3345,7 @@ class ProfilePage extends StatelessWidget {
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: const Color(0xffc7ffbf),
-                borderRadius: BorderRadius.circular(4),
+                borderRadius: BorderRadius.zero,
               ),
               child: Text(
                 getCensoredPhone(phone, countryCode),
@@ -3283,7 +3378,7 @@ class ProfilePage extends StatelessWidget {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: const Color(0xffc3e3ea),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.zero,
                   ),
                 ),
               ),
@@ -3420,7 +3515,7 @@ class _ImagesPageState extends State<ImagesPage> {
 
                       return Container(
                         decoration: BoxDecoration(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.zero,
                           boxShadow: [
                             BoxShadow(
                               color: Colors.black.withOpacity(0.1),
@@ -3431,7 +3526,7 @@ class _ImagesPageState extends State<ImagesPage> {
                           ],
                         ),
                         child: ClipRRect(
-                          borderRadius: BorderRadius.circular(12),
+                          borderRadius: BorderRadius.zero,
                           child: imageBytes != null
                               ? Image.memory(
                                   imageBytes,
@@ -3516,4 +3611,3 @@ class PhoneNumberFormatter extends TextInputFormatter {
     );
   }
 }
-

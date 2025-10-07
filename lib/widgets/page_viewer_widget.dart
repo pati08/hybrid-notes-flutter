@@ -257,11 +257,11 @@ class _PageContentWidgetState extends State<_PageContentWidget> {
       child: Card(
         elevation: 8,
         shadowColor: Colors.black.withValues(alpha: 0.3),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.zero,
         ),
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.zero,
           child: pageContent,
         ),
       ),
