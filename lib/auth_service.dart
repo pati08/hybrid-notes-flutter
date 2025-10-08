@@ -416,6 +416,92 @@ class AuthService {
     }
   }
 
+  // Get drawing list for a specific page
+  Future<DrawingListResult> getDrawingList(String documentId, int pageIndex) async {
+    try {
+      final response = await makeAuthenticatedRequest(
+        '/api/docs/get_drawing_list/$documentId/$pageIndex',
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        if (data is List) {
+          return DrawingListResult(
+            success: true,
+            drawingList: data,
+          );
+        } else {
+          return DrawingListResult(
+            success: false,
+            error: 'Invalid response format',
+          );
+        }
+      } else if (response.statusCode == 403) {
+        return DrawingListResult(
+          success: false,
+          error: 'Not authorized to access this document',
+        );
+      } else if (response.statusCode == 404) {
+        return DrawingListResult(
+          success: false,
+          error: 'Drawing list not found',
+        );
+      } else {
+        return DrawingListResult(
+          success: false,
+          error: 'Failed to get drawing list: ${response.statusCode}',
+        );
+      }
+    } catch (e) {
+      return DrawingListResult(
+        success: false,
+        error: 'Error getting drawing list: $e',
+      );
+    }
+  }
+
+  // Save drawing list for a specific page
+  Future<bool> saveDrawingList(
+    String documentId,
+    int pageIndex,
+    List<Map<String, dynamic>> drawingList,
+  ) async {
+    try {
+      final token = await getToken();
+      if (token == null) {
+        print('❌ No authentication token found');
+        throw Exception('No authentication token found');
+      }
+
+      final url = Uri.parse('$_baseUrl/api/docs/save_drawing_list/$documentId/$pageIndex');
+      print('🔍 Saving to URL: $url');
+      print('🔍 Drawing list length: ${drawingList.length}');
+      print('🔍 Request body: ${jsonEncode(drawingList)}');
+      
+      final response = await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': 'Bearer $token',
+        },
+        body: jsonEncode(drawingList),
+      );
+
+      print('📡 Response status: ${response.statusCode}');
+      print('📡 Response body: ${response.body}');
+      
+      if (response.statusCode != 200) {
+        print('❌ Failed with status ${response.statusCode}: ${response.body}');
+      }
+
+      return response.statusCode == 200;
+    } catch (e, stackTrace) {
+      print('❌ Error saving drawing list: $e');
+      print('Stack trace: $stackTrace');
+      return false;
+    }
+  }
+
   // Handle API response
   AuthResult _handleResponse(http.Response response) {
     // For successful responses, empty body is OK (like /auth/start)
@@ -564,6 +650,18 @@ class DocumentListResult {
   DocumentListResult({
     required this.success,
     this.documents,
+    this.error,
+  });
+}
+
+class DrawingListResult {
+  final bool success;
+  final List<dynamic>? drawingList;
+  final String? error;
+
+  DrawingListResult({
+    required this.success,
+    this.drawingList,
     this.error,
   });
 }

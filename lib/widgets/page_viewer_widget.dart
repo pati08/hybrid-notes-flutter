@@ -1,18 +1,24 @@
+import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:fleather/fleather.dart';
 import '../models/document_page_data.dart';
+import '../auth_service.dart';
+import 'image_drawing_screen.dart';
 
 /// Optimized page viewer widget with RepaintBoundary for smooth scrolling
 class PageViewerWidget extends StatefulWidget {
   final List<DocumentPageData> pages;
   final PageController pageController;
   final Function(int) onPageChanged;
+  final String? documentId;
 
   const PageViewerWidget({
     super.key,
     required this.pages,
     required this.pageController,
     required this.onPageChanged,
+    this.documentId,
   });
 
   @override
@@ -98,6 +104,7 @@ class _PageViewerWidgetState extends State<PageViewerWidget> {
               isTransitioning: _isTransitioning,
               canInitializeEditor: _initializedPages.contains(index),
               currentPageIndex: _settledPageIndex,
+              documentId: widget.documentId,
             ),
           );
         },
@@ -113,6 +120,7 @@ class _PageContentWidget extends StatefulWidget {
   final bool isTransitioning;
   final bool canInitializeEditor;
   final int currentPageIndex;
+  final String? documentId;
 
   const _PageContentWidget({
     required this.page,
@@ -120,6 +128,7 @@ class _PageContentWidget extends StatefulWidget {
     required this.isTransitioning,
     required this.canInitializeEditor,
     required this.currentPageIndex,
+    this.documentId,
   });
 
   @override
@@ -205,26 +214,14 @@ class _PageContentWidgetState extends State<_PageContentWidget> {
         ),
       );
     } else if (page.type == 'ImagePage') {
-      // Image page
+      // Image page with drawing overlay
       pageContent = Container(
         color: Colors.black,
         child: page.imageBytes != null
-            ? InteractiveViewer(
-                minScale: 0.5,
-                maxScale: 4.0,
-                child: Center(
-                  child: Image.memory(
-                    page.imageBytes!,
-                    fit: BoxFit.contain,
-                    // Prevent image from being rebuilt unnecessarily
-                    gaplessPlayback: true,
-                    // Use cacheWidth to reduce memory usage for large images
-                    cacheWidth: 2048,
-                    // Prevent unnecessary decoder rebuilds
-                    isAntiAlias: false,
-                    filterQuality: FilterQuality.medium,
-                  ),
-                ),
+            ? _ImageWithPathsWidget(
+                imageBytes: page.imageBytes!,
+                documentId: widget.documentId,
+                pageIndex: widget.index,
               )
             : const Center(
                 child: Column(
@@ -266,5 +263,157 @@ class _PageContentWidgetState extends State<_PageContentWidget> {
         ),
       ),
     );
+  }
+}
+
+/// Widget that displays an image with drawing paths overlaid
+class _ImageWithPathsWidget extends StatefulWidget {
+  final Uint8List imageBytes;
+  final String? documentId;
+  final int pageIndex;
+
+  const _ImageWithPathsWidget({
+    required this.imageBytes,
+    required this.documentId,
+    required this.pageIndex,
+  });
+
+  @override
+  State<_ImageWithPathsWidget> createState() => _ImageWithPathsWidgetState();
+}
+
+class _ImageWithPathsWidgetState extends State<_ImageWithPathsWidget> {
+  List<DrawingPath> _paths = [];
+  ui.Image? _image;
+  bool _isLoadingImage = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadImage();
+    _loadPaths();
+  }
+
+  Future<void> _loadImage() async {
+    try {
+      final codec = await ui.instantiateImageCodec(widget.imageBytes);
+      final frame = await codec.getNextFrame();
+      if (mounted) {
+        setState(() {
+          _image = frame.image;
+          _isLoadingImage = false;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading image: $e');
+      if (mounted) {
+        setState(() {
+          _isLoadingImage = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _loadPaths() async {
+    // Only load paths if we have documentId
+    if (widget.documentId == null) {
+      return;
+    }
+
+    try {
+      final authService = AuthService();
+      final result = await authService.getDrawingList(
+        widget.documentId!,
+        widget.pageIndex,
+      );
+
+      if (result.success && result.drawingList != null && mounted) {
+        final loadedPaths = result.drawingList!
+            .map((json) => DrawingPath.fromJson(json as Map<String, dynamic>))
+            .toList();
+        setState(() {
+          _paths = loadedPaths;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading paths for page ${widget.pageIndex}: $e');
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_isLoadingImage) {
+      return const Center(
+        child: CircularProgressIndicator(
+          valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+        ),
+      );
+    }
+
+    if (_image == null) {
+      return const Center(
+        child: Text(
+          'Failed to load image',
+          style: TextStyle(color: Colors.white),
+        ),
+      );
+    }
+
+    // Show image with paths overlay
+    return InteractiveViewer(
+      minScale: 0.5,
+      maxScale: 4.0,
+      child: Center(
+        child: CustomPaint(
+          painter: _ImageWithPathsPainter(
+            image: _image!,
+            paths: _paths,
+          ),
+          child: SizedBox(
+            width: _image!.width.toDouble(),
+            height: _image!.height.toDouble(),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Custom painter that draws image with paths overlay
+class _ImageWithPathsPainter extends CustomPainter {
+  final ui.Image image;
+  final List<DrawingPath> paths;
+
+  _ImageWithPathsPainter({
+    required this.image,
+    required this.paths,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Draw the image
+    canvas.drawImage(image, Offset.zero, Paint());
+
+    // Draw all paths on top
+    for (final path in paths) {
+      if (path.points.isEmpty) continue;
+
+      final paint = Paint()
+        ..color = path.color
+        ..strokeWidth = path.strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
+
+      for (int i = 0; i < path.points.length - 1; i++) {
+        canvas.drawLine(path.points[i], path.points[i + 1], paint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(_ImageWithPathsPainter oldDelegate) {
+    return oldDelegate.image != image || 
+           oldDelegate.paths.length != paths.length;
   }
 }

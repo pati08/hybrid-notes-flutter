@@ -2448,84 +2448,28 @@ class _DocumentPageState extends State<DocumentPage> {
       return;
     }
 
-    // Navigate to drawing screen
-    final result = await Navigator.push<Uint8List>(
+    // Navigate to drawing screen with documentId and page index
+    final result = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => ImageDrawingScreen(
           imageBytes: page.imageBytes!,
           currentAttachmentId: page.imageUrl,
+          documentId: widget.documentId,
+          pageIndex: index,
         ),
       ),
     );
 
-    // If user saved the drawing, upload it and replace the current page
-    if (result != null) {
-      try {
-        // Show loading dialog
-        showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => const Center(
-            child: CircularProgressIndicator(),
+    // If user saved the drawing, the paths are already saved via API
+    if (result == true) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Drawing saved successfully'),
+            backgroundColor: Color(0xffc7ffbf),
           ),
         );
-
-        // Upload the drawn image
-        final authService = AuthService();
-        final filename = 'drawn_${DateTime.now().millisecondsSinceEpoch}.png';
-        final uploadResult = await authService.uploadAttachment(
-          filename,
-          result.toList(),
-        );
-
-        // Hide loading dialog
-        Navigator.pop(context);
-
-        if (uploadResult.success && uploadResult.attachmentId != null) {
-          // Replace the current page with the new image
-          setState(() {
-            _pages[index] = DocumentPageData.image(
-              imageUrl: uploadResult.attachmentId,
-              imageBytes: result,
-            );
-          });
-
-          // Auto-save after updating image
-          _saveDocument(showFeedback: false);
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Drawing saved successfully'),
-                backgroundColor: Color(0xffc7ffbf),
-              ),
-            );
-          }
-        } else {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text('Upload failed: ${uploadResult.error}'),
-                backgroundColor: const Color(0xffbd6051),
-              ),
-            );
-          }
-        }
-      } catch (e) {
-        // Hide loading dialog if still showing
-        if (mounted && Navigator.canPop(context)) {
-          Navigator.pop(context);
-        }
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text('Error saving drawing: $e'),
-              backgroundColor: const Color(0xffbd6051),
-            ),
-          );
-        }
       }
     }
   }
@@ -2719,6 +2663,7 @@ class _DocumentPageState extends State<DocumentPage> {
             child: PageViewerWidget(
               pages: _pages,
               pageController: _pageController,
+              documentId: widget.documentId,
               onPageChanged: (index) {
                 // Do nothing - page index updates via listener when animation completes
               },
