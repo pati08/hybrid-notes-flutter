@@ -33,10 +33,8 @@ class ImageCacheService {
 
       if (result.success && result.fileBytes != null) {
         _cache[attachmentId] = Uint8List.fromList(result.fileBytes!);
-        debugPrint('✓ Cached image: $attachmentId');
       }
     } catch (e) {
-      debugPrint('✗ Error caching image $attachmentId: $e');
     } finally {
       _downloading.remove(attachmentId);
     }

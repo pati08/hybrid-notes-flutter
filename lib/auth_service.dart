@@ -159,9 +159,6 @@ class AuthService {
       final uploadUrl = data['upload_url'] as String;
       final objectKey = data['object_key'];
 
-      print('Upload URL from server: $uploadUrl');
-      print('Object key: $objectKey');
-
       // Step 2: Upload file to the correct endpoint
       // Check if upload_url is a full URL or a path
       Uri uploadUri;
@@ -173,8 +170,6 @@ class AuthService {
         uploadUri = Uri.parse('$_baseUrl$uploadUrl');
       }
 
-      print('Final upload URI: $uploadUri');
-
       final uploadResponse = await http.put(
         uploadUri,
         headers: {
@@ -182,8 +177,6 @@ class AuthService {
         },
         body: fileBytes,
       );
-
-      print('Upload response status: ${uploadResponse.statusCode}');
 
       if (uploadResponse.statusCode == 200) {
         return AttachmentUploadResult(
@@ -234,8 +227,6 @@ class AuthService {
         // It's a path, use our base URL
         downloadUri = Uri.parse('$_baseUrl$downloadUrl');
       }
-
-      print('Final download URI: $downloadUri');
 
       // Step 2: Download file from the provided URL
       final downloadResponse = await http.get(downloadUri);
@@ -469,14 +460,10 @@ class AuthService {
     try {
       final token = await getToken();
       if (token == null) {
-        print('❌ No authentication token found');
         throw Exception('No authentication token found');
       }
 
       final url = Uri.parse('$_baseUrl/api/docs/save_drawing_list/$documentId/$pageIndex');
-      print('🔍 Saving to URL: $url');
-      print('🔍 Drawing list length: ${drawingList.length}');
-      print('🔍 Request body: ${jsonEncode(drawingList)}');
       
       final response = await http.post(
         url,
@@ -487,17 +474,8 @@ class AuthService {
         body: jsonEncode(drawingList),
       );
 
-      print('📡 Response status: ${response.statusCode}');
-      print('📡 Response body: ${response.body}');
-      
-      if (response.statusCode != 200) {
-        print('❌ Failed with status ${response.statusCode}: ${response.body}');
-      }
-
       return response.statusCode == 200;
     } catch (e, stackTrace) {
-      print('❌ Error saving drawing list: $e');
-      print('Stack trace: $stackTrace');
       return false;
     }
   }

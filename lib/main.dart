@@ -12,7 +12,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 import 'models/document_page_data.dart';
 import 'services/image_cache_service.dart';
-import 'widgets/page_viewer_widget.dart';
+import 'widgets/continuous_canvas_viewer.dart';
 import 'widgets/image_drawing_screen.dart';
 
 void main() {
@@ -1022,7 +1022,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           isLoadingDocuments = false;
         });
       }
-      print('Error: $e');
     }
   }
 
@@ -1099,15 +1098,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       final result = await authService.uploadAttachment(fileName, fileBytes);
 
       if (result.success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                'File uploaded successfully! Attachment ID: ${result.attachmentId}'),
-            backgroundColor: const Color(0xffc7ffbf),
-          ),
-        );
         // Store attachmentId for later use
-        print('Attachment ID: ${result.attachmentId}');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1133,15 +1124,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       final result = await authService.downloadAttachment(attachmentId);
 
       if (result.success) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-                'File downloaded successfully! Size: ${result.fileBytes?.length} bytes'),
-            backgroundColor: const Color(0xffc7ffbf),
-          ),
-        );
         // Use result.fileBytes for the downloaded file
-        print('Downloaded file size: ${result.fileBytes?.length} bytes');
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -1349,7 +1332,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                         style: TextStyle(color: Color(0xff1c1c1c)),
                       ),
                       onTap: () async {
-                        debugPrint('Logging out...');
                         // Clear authentication token
                         final authService = AuthService();
                         await authService.clearToken();
@@ -1881,13 +1863,6 @@ class _CompactToolbarState extends State<CompactToolbar> {
         if (result.success) {
           // Store the attachment ID for this document
           await _storeImageAttachmentId(result.attachmentId!);
-
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Image uploaded successfully!'),
-              backgroundColor: Color(0xffc7ffbf),
-            ),
-          );
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -1935,7 +1910,6 @@ class DocumentPage extends StatefulWidget {
 }
 
 class _DocumentPageState extends State<DocumentPage> {
-  late PageController _pageController;
   late TextEditingController _titleController;
   bool _isEditingTitle = false;
   bool _isLoading = true;
@@ -1949,18 +1923,25 @@ class _DocumentPageState extends State<DocumentPage> {
   // Auto-save timer
   Timer? _autoSaveTimer;
   DateTime? _lastSaveTime;
-  bool _isScrolling = false;
+  
+  // Track when to refresh image paths (increment to force reload)
+  int _imageRefreshCounter = 0;
 
   @override
   void initState() {
     super.initState();
 
-    _pageController = PageController();
     _titleController = TextEditingController(text: widget.title);
     _pageIndexNotifier = ValueNotifier<int>(0);
 
-    // Listen to page controller to update index only when animation completes
-    _pageController.addListener(_onPageScrolled);
+    // Listen to page index changes
+    _pageIndexNotifier.addListener(() {
+      if (mounted && _pageIndexNotifier.value != _currentPageIndex) {
+        setState(() {
+          _currentPageIndex = _pageIndexNotifier.value;
+        });
+      }
+    });
 
     // Start periodic auto-save (every 30 seconds)
     _autoSaveTimer = Timer.periodic(const Duration(seconds: 30), (_) {
@@ -1969,35 +1950,6 @@ class _DocumentPageState extends State<DocumentPage> {
 
     // Load document from API
     _loadDocument();
-  }
-
-  void _onPageScrolled() {
-    // Update page index when scrolling passes the halfway point
-    if (_pageController.page != null) {
-      final page = _pageController.page!;
-      final newIndex = page.round();
-      
-      // Track scrolling state
-      final isAtPageBoundary = (page - page.roundToDouble()).abs() < 0.01;
-      final wasScrolling = _isScrolling;
-      _isScrolling = !isAtPageBoundary;
-      
-      // Update notifier immediately for toolbar (no rebuild of entire widget)
-      if (newIndex != _pageIndexNotifier.value && 
-          newIndex >= 0 && 
-          newIndex < _pages.length) {
-        _pageIndexNotifier.value = newIndex;
-      }
-      
-      // Only trigger setState when scroll animation completes for page counter
-      if (!_isScrolling && wasScrolling && newIndex != _currentPageIndex) {
-        if (mounted) {
-          setState(() {
-            _currentPageIndex = newIndex;
-          });
-        }
-      }
-    }
   }
 
   Future<void> _loadDocument() async {
@@ -2010,14 +1962,11 @@ class _DocumentPageState extends State<DocumentPage> {
       final authService = AuthService();
       final result = await authService.getDocument(widget.documentId);
 
-      print('Document load result: success=${result.success}');
-      print('Document data: ${result.document}');
 
       if (result.success && result.document != null) {
         // Parse pages and load them
         final pages = result.document!['pages'] as List<dynamic>?;
 
-        print('Pages found: ${pages?.length ?? 0}');
 
         List<DocumentPageData> loadedPages = [];
         List<String> imageAttachmentIds = [];
@@ -2041,54 +1990,45 @@ class _DocumentPageState extends State<DocumentPage> {
 
           // Preload ALL images concurrently before building UI
           if (imageAttachmentIds.isNotEmpty) {
-            print('⚡ Preloading ${imageAttachmentIds.length} images...');
             final imageCacheService = ImageCacheService();
             await imageCacheService.preloadImages(imageAttachmentIds);
-            print('✓ All images preloaded');
           }
 
           // Second pass: build page data with cached images
           for (var page in pages) {
-            print('Processing page: $page');
             final pageType = page['page_type'];
 
             if (pageType != null) {
-              print('Page type: ${pageType['type']}');
 
               if (pageType['type'] == 'DigitalPage') {
                 // Load the digital page content
+                final pageId = page['id']?.toString();
                 final quillJson = pageType['quill_json'];
 
-                print('Quill JSON: $quillJson');
 
                 if (quillJson != null && quillJson.isNotEmpty) {
                   try {
                     // Parse the Quill JSON and create controller
                     final deltaJson = jsonDecode(quillJson);
-                    print('Parsed delta JSON: $deltaJson');
-
                     final delta = Delta.fromJson(deltaJson);
-                    print('Created delta with ${delta.length} operations');
 
                     final doc = ParchmentDocument.fromDelta(delta);
                     final controller = FleatherController(document: doc);
 
                     loadedPages
-                        .add(DocumentPageData.digital(controller: controller));
-                    print('Added DigitalPage');
+                        .add(DocumentPageData.digital(id: pageId, controller: controller));
                   } catch (e) {
-                    print('Error parsing Quill JSON: $e');
                     // Add empty page if parsing fails
-                    loadedPages.add(DocumentPageData.digital());
+                    loadedPages.add(DocumentPageData.digital(id: pageId));
                   }
                 } else {
                   // Empty digital page
-                  loadedPages.add(DocumentPageData.digital());
+                  loadedPages.add(DocumentPageData.digital(id: pageId));
                 }
               } else if (pageType['type'] == 'ImagePage') {
                 // Load the image page with cached data
+                final pageId = page['id']?.toString();
                 final imageUrl = pageType['image_url'] as String?;
-                print('Image URL: $imageUrl');
 
                 final imageCacheService = ImageCacheService();
                 final cachedImage = imageUrl != null 
@@ -2096,10 +2036,10 @@ class _DocumentPageState extends State<DocumentPage> {
                     : null;
 
                 loadedPages.add(DocumentPageData.image(
+                  id: pageId,
                   imageUrl: imageUrl,
                   imageBytes: cachedImage,
                 ));
-                print('Added ImagePage with cached data: ${cachedImage != null}');
               }
             }
           }
@@ -2107,7 +2047,6 @@ class _DocumentPageState extends State<DocumentPage> {
 
         // If no pages loaded, add an empty digital page
         if (loadedPages.isEmpty) {
-          print('No pages loaded, adding empty digital page');
           loadedPages.add(DocumentPageData.digital());
         }
 
@@ -2142,15 +2081,9 @@ class _DocumentPageState extends State<DocumentPage> {
             _saveDocument(showFeedback: false);
           });
 
-          // Navigate to the first added image page
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            if (mounted) {
-              _pageController.jumpToPage(_currentPageIndex);
-            }
-          });
+          // Page index will be updated automatically by the notifier
         }
 
-        print('Document loaded with ${_pages.length} pages');
       } else {
         setState(() {
           _isLoading = false;
@@ -2162,8 +2095,6 @@ class _DocumentPageState extends State<DocumentPage> {
         _isLoading = false;
         _loadError = 'Error loading document: $e';
       });
-      print('Error in _loadDocument: $e');
-      print('Stack trace: ${StackTrace.current}');
     }
   }
 
@@ -2176,12 +2107,8 @@ class _DocumentPageState extends State<DocumentPage> {
     // Cancel auto-save timer
     _autoSaveTimer?.cancel();
 
-    // Remove listener before disposing
-    _pageController.removeListener(_onPageScrolled);
-
     // Dispose controllers
     _titleController.dispose();
-    _pageController.dispose();
     _pageIndexNotifier.dispose();
     for (var page in _pages) {
       page.dispose();
@@ -2219,15 +2146,6 @@ class _DocumentPageState extends State<DocumentPage> {
         setState(() {
           _isEditingTitle = false;
         });
-
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Document renamed successfully'),
-              backgroundColor: Color(0xffc7ffbf),
-            ),
-          );
-        }
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2264,23 +2182,31 @@ class _DocumentPageState extends State<DocumentPage> {
       // Convert all pages to API format
       final pages = _pages.map((page) {
         if (page.type == 'DigitalPage' && page.controller != null) {
-          return {
+          final result = <String, dynamic>{
             'page_type': {
               'type': 'DigitalPage',
               'quill_json':
                   jsonEncode(page.controller!.document.toDelta().toJson()),
             }
           };
+          if (page.id != null) {
+            result['id'] = page.id;
+          }
+          return result;
         } else if (page.type == 'ImagePage' && page.imageUrl != null) {
-          return {
+          final result = <String, dynamic>{
             'page_type': {
               'type': 'ImagePage',
               'image_url': page.imageUrl,
             }
           };
+          if (page.id != null) {
+            result['id'] = page.id;
+          }
+          return result;
         } else {
           // Empty digital page fallback
-          return {
+          final result = <String, dynamic>{
             'page_type': {
               'type': 'DigitalPage',
               'quill_json': jsonEncode([
@@ -2288,6 +2214,10 @@ class _DocumentPageState extends State<DocumentPage> {
               ]),
             }
           };
+          if (page.id != null) {
+            result['id'] = page.id;
+          }
+          return result;
         }
       }).toList();
 
@@ -2296,16 +2226,6 @@ class _DocumentPageState extends State<DocumentPage> {
 
       if (success) {
         _lastSaveTime = DateTime.now();
-
-        if (showFeedback && mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Document saved successfully'),
-              backgroundColor: Color(0xffc7ffbf),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
       } else {
         if (showFeedback && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -2317,7 +2237,6 @@ class _DocumentPageState extends State<DocumentPage> {
         }
       }
     } catch (e) {
-      print('Error saving document: $e');
       if (showFeedback && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
@@ -2333,11 +2252,7 @@ class _DocumentPageState extends State<DocumentPage> {
     setState(() {
       _pages.add(DocumentPageData.digital());
       _currentPageIndex = _pages.length - 1;
-      _pageController.animateToPage(
-        _currentPageIndex,
-        duration: const Duration(milliseconds: 300),
-        curve: Curves.easeInOut,
-      );
+      _pageIndexNotifier.value = _currentPageIndex;
     });
   }
 
@@ -2375,24 +2290,11 @@ class _DocumentPageState extends State<DocumentPage> {
               imageBytes: Uint8List.fromList(imageBytes),
             ));
             _currentPageIndex = _pages.length - 1;
-            _pageController.animateToPage(
-              _currentPageIndex,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
+            _pageIndexNotifier.value = _currentPageIndex;
           });
 
           // Auto-save after adding image
           _saveDocument(showFeedback: false);
-
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Image added successfully'),
-                backgroundColor: Color(0xffc7ffbf),
-              ),
-            );
-          }
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -2434,8 +2336,7 @@ class _DocumentPageState extends State<DocumentPage> {
       if (_currentPageIndex >= _pages.length) {
         _currentPageIndex = _pages.length - 1;
       }
-
-      _pageController.jumpToPage(_currentPageIndex);
+      _pageIndexNotifier.value = _currentPageIndex;
     });
 
     // Auto-save after deleting
@@ -2444,7 +2345,14 @@ class _DocumentPageState extends State<DocumentPage> {
 
   Future<void> _drawOnImage(int index) async {
     final page = _pages[index];
-    if (page.type != 'ImagePage' || page.imageBytes == null) {
+    
+    // Check if we can draw on this page
+    // For ImagePage, we need imageBytes to be loaded
+    // For DigitalPage, we need a controller
+    if (page.type == 'ImagePage' && page.imageBytes == null) {
+      return;
+    }
+    if (page.type == 'DigitalPage' && page.controller == null) {
       return;
     }
 
@@ -2453,8 +2361,7 @@ class _DocumentPageState extends State<DocumentPage> {
       context,
       MaterialPageRoute(
         builder: (context) => ImageDrawingScreen(
-          imageBytes: page.imageBytes!,
-          currentAttachmentId: page.imageUrl,
+          page: page,
           documentId: widget.documentId,
           pageIndex: index,
         ),
@@ -2463,13 +2370,20 @@ class _DocumentPageState extends State<DocumentPage> {
 
     // If user saved the drawing, the paths are already saved via API
     if (result == true) {
+      // Force refresh the page to reload the drawing paths
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Drawing saved successfully'),
-            backgroundColor: Color(0xffc7ffbf),
-          ),
-        );
+        final currentPage = _currentPageIndex;
+        
+        setState(() {
+          _imageRefreshCounter++;
+        });
+        
+        // Restore the page position after rebuild
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) {
+            _pageIndexNotifier.value = currentPage;
+          }
+        });
       }
     }
   }
@@ -2657,101 +2571,13 @@ class _DocumentPageState extends State<DocumentPage> {
             },
           ),
 
-          // Page view with horizontal scrolling - optimized with RepaintBoundary
-          // Note: onPageChanged removed to prevent setState during animation
+          // Continuous canvas view - zoom and pan around all pages
           Expanded(
-            child: PageViewerWidget(
+            child: ContinuousCanvasViewer(
+              key: ValueKey(_imageRefreshCounter),
               pages: _pages,
-              pageController: _pageController,
               documentId: widget.documentId,
-              onPageChanged: (index) {
-                // Do nothing - page index updates via listener when animation completes
-              },
-            ),
-          ),
-
-          // Page counter and navigation at bottom
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: const BoxDecoration(
-              color: Color(0xfffafafa),
-              border: Border(
-                top: BorderSide(color: Color(0xffc3e3ea), width: 1),
-              ),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.chevron_left),
-                  onPressed: _currentPageIndex > 0
-                      ? () {
-                          setState(() {
-                            _currentPageIndex--;
-                            _pageController.animateToPage(
-                              _currentPageIndex,
-                              duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeInOut,
-                            );
-                          });
-                        }
-                      : null,
-                ),
-                Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Page ${_currentPageIndex + 1} of ${_pages.length}',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                    if (_lastSaveTime != null)
-                      Text(
-                        'Last saved: ${_formatSaveTime(_lastSaveTime!)}',
-                        style: TextStyle(
-                          fontSize: 10,
-                          color: Colors.grey[600],
-                        ),
-                      ),
-                  ],
-                ),
-                Row(
-                  children: [
-                    // Show draw button only for image pages
-                    if (_pages[_currentPageIndex].type == 'ImagePage' &&
-                        _pages[_currentPageIndex].imageBytes != null)
-                      IconButton(
-                        icon: const Icon(Icons.draw, color: Color(0xff4a90e2)),
-                        onPressed: () => _drawOnImage(_currentPageIndex),
-                        tooltip: 'Draw on Image',
-                      ),
-                    if (_pages.length > 1)
-                      IconButton(
-                        icon:
-                            const Icon(Icons.delete, color: Color(0xffbd6051)),
-                        onPressed: () => _deletePage(_currentPageIndex),
-                        tooltip: 'Delete Page',
-                      ),
-                    IconButton(
-                      icon: const Icon(Icons.chevron_right),
-                      onPressed: _currentPageIndex < _pages.length - 1
-                          ? () {
-                              setState(() {
-                                _currentPageIndex++;
-                                _pageController.animateToPage(
-                                  _currentPageIndex,
-                                  duration: const Duration(milliseconds: 300),
-                                  curve: Curves.easeInOut,
-                                );
-                              });
-                            }
-                          : null,
-                    ),
-                  ],
-                ),
-              ],
+              currentPageNotifier: _pageIndexNotifier,
             ),
           ),
         ],
@@ -3397,7 +3223,6 @@ class _ImagesPageState extends State<ImagesPage> {
             });
           }
         } catch (e) {
-          print('Error loading image $attachmentId: $e');
         }
       }
     }
