@@ -21,15 +21,12 @@ class ImageDrawingScreen extends StatefulWidget {
 }
 
 class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
-  final List<DrawingPath> _paths = [];
-  final List<DrawingPath> _undoPaths = [];
   Color _selectedColor = Colors.red;
+  // ignore: unused_field
   double _strokeWidth = 5.0;
   DrawingMode _mode = DrawingMode.draw;
   ui.Image? _backgroundImage;
   bool _isLoading = true;
-  bool _isDrawing = false;
-  final GlobalKey _repaintKey = GlobalKey();
   late final TransformationController _transformationController;
 
   @override
@@ -96,36 +93,27 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
         final loadedPaths = result.drawingList!
             .map((json) => DrawingPath.fromJson(json as Map<String, dynamic>))
             .toList();
-        setState(() {
-          _paths.clear();
-          _paths.addAll(loadedPaths);
-        });
+        // TODO: Store and display loaded paths
+        debugPrint('Loaded ${loadedPaths.length} drawing paths');
       }
     } catch (e) {
+      debugPrint('Error loading paths: $e');
     }
   }
 
   void _undo() {
-    if (_paths.isNotEmpty) {
-      setState(() {
-        _undoPaths.add(_paths.removeLast());
-      });
-    }
+    // TODO: Implement undo functionality
+    debugPrint('Undo not implemented');
   }
 
   void _redo() {
-    if (_undoPaths.isNotEmpty) {
-      setState(() {
-        _paths.add(_undoPaths.removeLast());
-      });
-    }
+    // TODO: Implement redo functionality
+    debugPrint('Redo not implemented');
   }
 
   void _clear() {
-    setState(() {
-      _paths.clear();
-      _undoPaths.clear();
-    });
+    // TODO: Implement clear functionality
+    debugPrint('Clear not implemented');
   }
 
   Future<bool> _savePaths() async {
@@ -136,7 +124,8 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
     try {
       final authService = AuthService();
-      final pathsJson = _paths.map((path) => path.toJson()).toList();
+      // TODO: Collect actual drawing paths
+      final pathsJson = <Map<String, dynamic>>[];
       
       final success = await authService.saveDrawingList(
         widget.documentId!,
@@ -145,7 +134,8 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
       );
 
       return success;
-    } catch (e, stackTrace) {
+    } catch (e) {
+      debugPrint('Error saving paths: $e');
       return false;
     }
   }
@@ -207,17 +197,17 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.undo),
-                    onPressed: _paths.isNotEmpty ? _undo : null,
+                    onPressed: _undo,
                     tooltip: 'Undo',
                   ),
                   IconButton(
                     icon: const Icon(Icons.redo),
-                    onPressed: _undoPaths.isNotEmpty ? _redo : null,
+                    onPressed: _redo,
                     tooltip: 'Redo',
                   ),
                   IconButton(
                     icon: const Icon(Icons.clear),
-                    onPressed: _paths.isNotEmpty ? _clear : null,
+                    onPressed: _clear,
                     tooltip: 'Clear All',
                   ),
                   const VerticalDivider(),
@@ -299,10 +289,7 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                   transformationController: _transformationController,
                   minScale: 0.5,
                   maxScale: 4.0,
-                  child: RepaintBoundary(
-                    key: _repaintKey,
-                    child: _buildDrawingCanvas(),
-                  ),
+                  child: _buildDrawingCanvas(),
                 ),
               ),
             ),
@@ -320,35 +307,20 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
           return SizedBox(
             width: constraints.maxWidth,
             height: constraints.maxHeight,
-            child: Stack(
-              children: [
-                // Non-interactive layer showing the digital content
-                Positioned.fill(
-                  child: AbsorbPointer(
-                    child: Container(
-                      color: const Color(0xfffafafa),
-                      padding: const EdgeInsets.all(16.0),
-                      child: widget.page.controller != null
-                          ? FleatherEditor(controller: widget.page.controller!)
-                          : const SizedBox.shrink(),
-                    ),
-                  ),
-                ),
-                // Interactive drawing layer on top
-                Positioned.fill(
-                  child: _buildInteractiveDrawingLayer(
-                    Size(constraints.maxWidth, constraints.maxHeight),
-                    null,
-                    imageDisplayRect: null,
-                  ),
-                ),
-              ],
+            child: Container(
+              color: const Color(0xfffafafa),
+              padding: const EdgeInsets.all(16.0),
+              child: widget.page.controller != null
+                  ? AbsorbPointer(
+                      child: FleatherEditor(controller: widget.page.controller!),
+                    )
+                  : const SizedBox.shrink(),
             ),
           );
         },
       );
     } else {
-      // For image pages, allow drawing beyond image bounds while showing image centered with shadow
+      // For image pages, show image centered with shadow
       return LayoutBuilder(
         builder: (context, constraints) {
           if (_backgroundImage == null) {
@@ -371,43 +343,20 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
             displayHeight = displayWidth / imageAspect;
           }
           
-          // Use a stack to layer the shadow box and the full-size drawing canvas
-          return SizedBox(
-            width: constraints.maxWidth,
-            height: constraints.maxHeight,
-            child: Stack(
-              children: [
-                // Centered shadow box showing the image bounds (non-interactive)
-                Center(
-                  child: IgnorePointer(
-                    child: Container(
-                      width: displayWidth,
-                      height: displayHeight,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.3),
-                            blurRadius: 10,
-                            spreadRadius: 2,
-                            offset: const Offset(0, 4),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-                // Full-size interactive drawing layer
-                _buildInteractiveDrawingLayer(
-                  Size(constraints.maxWidth, constraints.maxHeight),
-                  _backgroundImage,
-                  imageDisplayRect: Rect.fromCenter(
-                    center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2),
-                    width: displayWidth,
-                    height: displayHeight,
-                  ),
-                ),
-              ],
+          final imageRect = Rect.fromCenter(
+            center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2),
+            width: displayWidth,
+            height: displayHeight,
+          );
+          
+          return CustomPaint(
+            painter: _ImagePainter(
+              image: _backgroundImage!,
+              imageDisplayRect: imageRect,
+            ),
+            child: SizedBox(
+              width: constraints.maxWidth,
+              height: constraints.maxHeight,
             ),
           );
         },
@@ -415,79 +364,6 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
     }
   }
 
-  Widget _buildInteractiveDrawingLayer(Size size, ui.Image? image, {Rect? imageDisplayRect}) {
-    return Listener(
-      onPointerDown: (details) {
-        setState(() {
-          _isDrawing = true;
-          _undoPaths.clear();
-          if (_mode == DrawingMode.erase) {
-            return;
-          }
-          final newPath = DrawingPath(
-            points: [details.localPosition],
-            color: _mode == DrawingMode.erase
-                ? Colors.transparent
-                : _selectedColor,
-            strokeWidth: _strokeWidth,
-          );
-          _paths.add(newPath);
-        });
-      },
-      onPointerMove: (details) {
-        if (_isDrawing) {
-          setState(() {
-            if (_mode == DrawingMode.erase) {
-              // In erase mode, remove paths that are touched
-              _paths.removeWhere((path) {
-                // Check if eraser point is near any point in this path
-                for (final point in path.points) {
-                  final distance =
-                      (point - details.localPosition).distance;
-                  if (distance < path.strokeWidth * 2) {
-                    return true; // Remove this path
-                  }
-                }
-                return false; // Keep this path
-              });
-            } else if (_paths.isNotEmpty) {
-              // In draw mode, add points to current path
-              final currentPath = _paths.last;
-              final updatedPoints =
-                  List<Offset>.from(currentPath.points)
-                    ..add(details.localPosition);
-              _paths[_paths.length - 1] = DrawingPath(
-                points: updatedPoints,
-                color: currentPath.color,
-                strokeWidth: currentPath.strokeWidth,
-              );
-            }
-          });
-        }
-      },
-      onPointerUp: (details) {
-        setState(() {
-          _isDrawing = false;
-        });
-      },
-      onPointerCancel: (details) {
-        setState(() {
-          _isDrawing = false;
-        });
-      },
-      child: CustomPaint(
-        painter: DrawingPainter(
-          backgroundImage: image,
-          paths: List<DrawingPath>.from(_paths),
-          imageDisplayRect: imageDisplayRect,
-        ),
-        child: SizedBox(
-          width: size.width,
-          height: size.height,
-        ),
-      ),
-    );
-  }
 
   Widget _buildColorButton(Color color) {
     final isSelected = _selectedColor == color;
@@ -569,75 +445,31 @@ class DrawingPath {
   }
 }
 
-class DrawingPainter extends CustomPainter {
-  final ui.Image? backgroundImage;
-  final List<DrawingPath> paths;
-  final Rect? imageDisplayRect;
+/// Simple painter that only draws the image (no drawing paths)
+class _ImagePainter extends CustomPainter {
+  final ui.Image image;
+  final Rect imageDisplayRect;
 
-  DrawingPainter({
-    this.backgroundImage,
-    required this.paths,
-    this.imageDisplayRect,
+  _ImagePainter({
+    required this.image,
+    required this.imageDisplayRect,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw background image in the specified display rect (or fill canvas if no rect specified)
-    if (backgroundImage != null) {
-      final srcRect = Rect.fromLTWH(
-        0,
-        0,
-        backgroundImage!.width.toDouble(),
-        backgroundImage!.height.toDouble(),
-      );
-      
-      final dstRect = imageDisplayRect ?? Rect.fromLTWH(0, 0, size.width, size.height);
-      canvas.drawImageRect(backgroundImage!, srcRect, dstRect, Paint());
-    }
-
-    // Create a separate layer for drawings so eraser doesn't affect background
-    canvas.saveLayer(Offset.zero & size, Paint());
-
-    // Draw all paths
-    for (int pathIndex = 0; pathIndex < paths.length; pathIndex++) {
-      final path = paths[pathIndex];
-
-      if (path.points.isEmpty) {
-        continue;
-      }
-
-      final paint = Paint()
-        ..strokeWidth = path.strokeWidth
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..style = PaintingStyle.stroke;
-
-      paint.color = path.color;
-
-      for (int i = 0; i < path.points.length - 1; i++) {
-        canvas.drawLine(path.points[i], path.points[i + 1], paint);
-      }
-    }
-
-    // Restore the layer
-    canvas.restore();
+    final srcRect = Rect.fromLTWH(
+      0,
+      0,
+      image.width.toDouble(),
+      image.height.toDouble(),
+    );
+    canvas.drawImageRect(image, srcRect, imageDisplayRect, Paint());
   }
 
   @override
-  bool shouldRepaint(DrawingPainter oldDelegate) {
-    // Always repaint when paths or background changes
-    // We need to check the actual content, not just reference equality
-    if (oldDelegate.backgroundImage != backgroundImage) return true;
-    if (oldDelegate.paths.length != paths.length) return true;
-
-    // Check if any path has changed
-    for (int i = 0; i < paths.length; i++) {
-      if (oldDelegate.paths[i].points.length != paths[i].points.length) {
-        return true;
-      }
-    }
-
-    return false;
+  bool shouldRepaint(_ImagePainter oldDelegate) {
+    return oldDelegate.image != image || 
+           oldDelegate.imageDisplayRect != imageDisplayRect;
   }
 }
 

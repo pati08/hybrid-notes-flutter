@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
@@ -25,30 +26,37 @@ class ContinuousCanvasViewer extends StatefulWidget {
 }
 
 class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
-  final TransformationController _transformationController = TransformationController();
+  final TransformationController _transformationController =
+      TransformationController();
   final double _pageWidth = 800.0; // Standard page width
   final double _pageSpacing = 40.0; // Spacing between pages
   final Map<int, double> _pageHeights = {}; // Cache calculated page heights
   int _refreshKey = 0; // Key to force rebuild of preview widgets
-  
+
   // Drawing mode state
   bool _isDrawingMode = false;
-  final Map<int, List<DrawingPath>> _pageDrawings = {}; // Drawings per page
-  bool _isDrawing = false;
   Color _selectedColor = Colors.red;
   double _strokeWidth = 5.0;
   DrawingMode _drawMode = DrawingMode.draw;
   
+  // Drawing data storage
+  final Map<int, List<DrawingPath>> _pageDrawings = {}; // Map of page index to list of paths
+  DrawingPath? _currentPath; // Currently drawing path
+  int? _currentDrawingPage; // Which page we're currently drawing on
+  
+  // Track number of pointers for two-finger gestures
+  int _pointerCount = 0;
+
   @override
   void initState() {
     super.initState();
-    
+
     // Pre-calculate page heights
     _calculatePageHeights();
-    
-    // Load all drawings
+
+    // Load existing drawings for all pages
     _loadAllDrawings();
-    
+
     // Set initial view to show first page centered and scaled to fit
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _centerOnPage(0);
@@ -59,44 +67,36 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
     if (widget.documentId == null) return;
     
     for (int i = 0; i < widget.pages.length; i++) {
-      try {
-        final authService = AuthService();
-        final result = await authService.getDrawingList(
-          widget.documentId!,
-          i,
-        );
-
-        if (result.success && result.drawingList != null) {
-          final loadedPaths = result.drawingList!
-              .map((json) => DrawingPath.fromJson(json as Map<String, dynamic>))
-              .toList();
-          if (mounted) {
-            setState(() {
-              _pageDrawings[i] = loadedPaths;
-            });
-          }
-        }
-      } catch (e) {
-        // Silently fail
-      }
+      await _loadDrawingsForPage(i);
     }
   }
   
-  Future<void> _saveDrawingsForPage(int pageIndex) async {
+  Future<void> _loadDrawingsForPage(int pageIndex) async {
     if (widget.documentId == null) return;
     
     try {
       final authService = AuthService();
-      final paths = _pageDrawings[pageIndex] ?? [];
-      final pathsJson = paths.map((path) => path.toJson()).toList();
-      
-      await authService.saveDrawingList(
+      final result = await authService.getDrawingList(
         widget.documentId!,
         pageIndex,
-        pathsJson,
       );
+      
+      if (result.success && result.drawingList != null && mounted) {
+        final paths = result.drawingList!
+            .map((json) => DrawingPath.fromJson(json as Map<String, dynamic>))
+            .toList();
+        debugPrint('Loaded ${paths.length} paths for page $pageIndex');
+        if (paths.isNotEmpty) {
+          debugPrint('First path has ${paths[0].points.length} points');
+        }
+        setState(() {
+          _pageDrawings[pageIndex] = paths;
+        });
+      } else {
+        debugPrint('No drawings found for page $pageIndex (success: ${result.success})');
+      }
     } catch (e) {
-      // Silently fail
+      debugPrint('Error loading drawings for page $pageIndex: $e');
     }
   }
 
@@ -114,7 +114,7 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
 
   double _calculatePageHeight(int index) {
     if (index >= widget.pages.length) return 1000.0;
-    
+
     final page = widget.pages[index];
     if (page.type == 'ImagePage' && page.imageBytes != null) {
       // For image pages, we need to decode the image to get its aspect ratio
@@ -141,23 +141,26 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
 
   void _centerOnPage(int pageIndex) {
     if (!mounted) return;
-    
+
     final context = this.context;
     final size = MediaQuery.of(context).size;
-    
+
     // Calculate page position
     double pageY = _pageSpacing;
     for (int i = 0; i < pageIndex; i++) {
       pageY += _getPageHeight(i) + _pageSpacing;
     }
-    
+
     // Calculate scale to fit page width
     final scale = (size.width * 0.9) / _pageWidth;
-    
+
     // Center the page
     final offsetX = (size.width - _pageWidth * scale) / 2;
-    final offsetY = (size.height / 2) - (pageY * scale) - (_getPageHeight(pageIndex) * scale / 2);
-    
+    final offsetY = (size.height / 2) -
+        (pageY * scale) -
+        (_getPageHeight(pageIndex) * scale / 2);
+
+    // ignore: deprecated_member_use
     _transformationController.value = Matrix4.identity()
       ..translate(offsetX, offsetY)
       ..scale(scale);
@@ -166,15 +169,15 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
   void _handlePageTap(int pageIndex) async {
     // Don't navigate when in drawing mode
     if (_isDrawingMode) return;
-    
+
     // Navigate to edit screen for the page (for typing on digital pages)
     widget.currentPageNotifier.value = pageIndex;
-    
+
     final page = widget.pages[pageIndex];
-    
+
     // Only allow editing digital pages (for typing)
     if (page.type != 'DigitalPage' || page.controller == null) return;
-    
+
     final result = await Navigator.push(
       context,
       MaterialPageRoute(
@@ -185,7 +188,7 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         ),
       ),
     );
-    
+
     // Refresh the page preview after editing
     if (result == true && mounted) {
       setState(() {
@@ -193,6 +196,287 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
       });
     }
   }
+  
+  // Detect which page a point is on, returns null if not on any page
+  int? _getPageAtPosition(Offset position) {
+    // Account for transformation
+    final matrix = _transformationController.value;
+    final inverse = Matrix4.inverted(matrix);
+    final transformedPoint = MatrixUtils.transformPoint(inverse, position);
+    
+    double currentY = _pageSpacing;
+    for (int i = 0; i < widget.pages.length; i++) {
+      final pageHeight = _getPageHeight(i);
+      
+      // Check if point is within this page's bounds
+      if (transformedPoint.dx >= _pageSpacing &&
+          transformedPoint.dx <= _pageSpacing + _pageWidth &&
+          transformedPoint.dy >= currentY &&
+          transformedPoint.dy <= currentY + pageHeight) {
+        return i;
+      }
+      
+      currentY += pageHeight + _pageSpacing;
+    }
+    
+    return null; // Not on any page
+  }
+  
+  // Convert screen coordinates to page-local coordinates
+  Offset _screenToPageCoordinates(Offset screenPoint, int pageIndex) {
+    final matrix = _transformationController.value;
+    final inverse = Matrix4.inverted(matrix);
+    final transformedPoint = MatrixUtils.transformPoint(inverse, screenPoint);
+    
+    // Calculate page top-left position
+    double pageY = _pageSpacing;
+    for (int i = 0; i < pageIndex; i++) {
+      pageY += _getPageHeight(i) + _pageSpacing;
+    }
+    
+    // Convert to page-local coordinates
+    return Offset(
+      transformedPoint.dx - _pageSpacing,
+      transformedPoint.dy - pageY,
+    );
+  }
+  
+  void _handleDrawingStart(Offset screenPosition) {
+    // Only draw with exactly one finger
+    if (!_isDrawingMode || _pointerCount != 1) return;
+    
+    final pageIndex = _getPageAtPosition(screenPosition);
+    if (pageIndex == null) {
+      return; // Not on a page
+    }
+    
+    final localPoint = _screenToPageCoordinates(screenPosition, pageIndex);
+    final newPath = DrawingPath(
+      points: [localPoint],
+      color: _selectedColor,
+      strokeWidth: _strokeWidth,
+    );
+    
+    setState(() {
+      _currentDrawingPage = pageIndex;
+      _currentPath = newPath;
+      if (_drawMode == DrawingMode.erase) {
+        _erasePaths(pageIndex, newPath);
+      }
+    });
+  }
+  
+  void _handleDrawingUpdate(Offset screenPosition) {
+    // Stop drawing if a second finger touches
+    if (!_isDrawingMode || _currentPath == null || _currentDrawingPage == null || _pointerCount != 1) {
+      // If we were drawing and a second finger touched, end the current path
+      if (_currentPath != null && _pointerCount > 1) {
+        _handleDrawingEnd();
+      }
+      return;
+    }
+    
+    final pageIndex = _getPageAtPosition(screenPosition);
+    final currentPage = _currentDrawingPage!;
+    if (pageIndex != currentPage) return; // Moved off the page
+    
+    final localPoint = _screenToPageCoordinates(screenPosition, currentPage);
+    
+    setState(() {
+      final updatedPath = DrawingPath(
+        points: [..._currentPath!.points, localPoint],
+        color: _currentPath!.color,
+        strokeWidth: _currentPath!.strokeWidth,
+      );
+      _currentPath = updatedPath;
+      if (_drawMode == DrawingMode.erase) {
+        _erasePaths(currentPage, updatedPath);
+      }
+    });
+  }
+  
+  void _handleDrawingEnd() {
+    if (!_isDrawingMode || _currentPath == null || _currentDrawingPage == null) return;
+    
+    setState(() {
+      // Add the completed path to the page's drawing list
+      if (_drawMode == DrawingMode.draw) {
+        if (!_pageDrawings.containsKey(_currentDrawingPage)) {
+          _pageDrawings[_currentDrawingPage!] = [];
+        }
+        _pageDrawings[_currentDrawingPage!]!.add(_currentPath!);
+        debugPrint('Added path with ${_currentPath!.points.length} points to page $_currentDrawingPage. Total paths: ${_pageDrawings[_currentDrawingPage!]!.length}');
+      } else if (_drawMode == DrawingMode.erase) {
+        // Erase mode: remove paths that intersect with the eraser
+        _erasePaths(_currentDrawingPage!, _currentPath!);
+      }
+      
+      _currentPath = null;
+      _currentDrawingPage = null;
+    });
+  }
+  
+  void _erasePaths(int pageIndex, DrawingPath eraserPath) {
+    if (!_pageDrawings.containsKey(pageIndex)) return;
+    
+    final paths = _pageDrawings[pageIndex]!;
+    final eraserPoints = eraserPath.points;
+    
+    // Remove paths that intersect with the eraser
+    paths.removeWhere((path) {
+      if (path.points.isEmpty || eraserPoints.isEmpty) {
+        return false;
+      }
+
+      final tolerance = math.max(path.strokeWidth, eraserPath.strokeWidth);
+
+      // Quick point proximity check (covers dots and very short segments)
+      for (final pathPoint in path.points) {
+        for (final eraserPoint in eraserPoints) {
+          if ((pathPoint - eraserPoint).distance <= tolerance) {
+            return true;
+          }
+        }
+      }
+
+      // Handle single-point eraser paths against drawn segments
+      if (eraserPoints.length == 1 && path.points.length > 1) {
+        final eraserPoint = eraserPoints.first;
+        for (int i = 0; i < path.points.length - 1; i++) {
+          final segmentStart = path.points[i];
+          final segmentEnd = path.points[i + 1];
+          if (_distancePointToSegment(eraserPoint, segmentStart, segmentEnd) <= tolerance) {
+            return true;
+          }
+        }
+      }
+
+      // Handle single-point drawing paths against eraser segments
+      if (path.points.length == 1 && eraserPoints.length > 1) {
+        final pathPoint = path.points.first;
+        for (int i = 0; i < eraserPoints.length - 1; i++) {
+          final eraserStart = eraserPoints[i];
+          final eraserEnd = eraserPoints[i + 1];
+          if (_distancePointToSegment(pathPoint, eraserStart, eraserEnd) <= tolerance) {
+            return true;
+          }
+        }
+      }
+
+      // Check for segment proximity/intersection between the drawing and eraser paths
+      if (path.points.length > 1 && eraserPoints.length > 1) {
+        for (int i = 0; i < path.points.length - 1; i++) {
+          final pathStart = path.points[i];
+          final pathEnd = path.points[i + 1];
+          for (int j = 0; j < eraserPoints.length - 1; j++) {
+            final eraserStart = eraserPoints[j];
+            final eraserEnd = eraserPoints[j + 1];
+            if (_distanceBetweenSegments(pathStart, pathEnd, eraserStart, eraserEnd) <= tolerance) {
+              return true;
+            }
+          }
+        }
+      }
+
+      return false;
+    });
+  }
+
+  double _distancePointToSegment(Offset point, Offset segmentStart, Offset segmentEnd) {
+    final segment = segmentEnd - segmentStart;
+    final lengthSquared = segment.dx * segment.dx + segment.dy * segment.dy;
+
+    if (lengthSquared == 0.0) {
+      return (point - segmentStart).distance;
+    }
+
+    final t = ((point.dx - segmentStart.dx) * segment.dx +
+            (point.dy - segmentStart.dy) * segment.dy) /
+        lengthSquared;
+    final clampedT = t.clamp(0.0, 1.0) as double;
+    final projection = Offset(
+      segmentStart.dx + clampedT * segment.dx,
+      segmentStart.dy + clampedT * segment.dy,
+    );
+
+    return (point - projection).distance;
+  }
+
+  double _distanceBetweenSegments(
+    Offset p1,
+    Offset p2,
+    Offset q1,
+    Offset q2,
+  ) {
+    if (_segmentsIntersect(p1, p2, q1, q2)) {
+      return 0.0;
+    }
+
+    final distances = [
+      _distancePointToSegment(p1, q1, q2),
+      _distancePointToSegment(p2, q1, q2),
+      _distancePointToSegment(q1, p1, p2),
+      _distancePointToSegment(q2, p1, p2),
+    ];
+
+    return distances.reduce(math.min);
+  }
+
+  bool _segmentsIntersect(Offset p1, Offset p2, Offset q1, Offset q2) {
+    const double epsilon = 1e-6;
+
+    final o1 = _orientation(p1, p2, q1);
+    final o2 = _orientation(p1, p2, q2);
+    final o3 = _orientation(q1, q2, p1);
+    final o4 = _orientation(q1, q2, p2);
+
+    if ((o1 * o2) < 0 && (o3 * o4) < 0) {
+      return true;
+    }
+
+    if (o1.abs() < epsilon && _onSegment(p1, q1, p2)) return true;
+    if (o2.abs() < epsilon && _onSegment(p1, q2, p2)) return true;
+    if (o3.abs() < epsilon && _onSegment(q1, p1, q2)) return true;
+    if (o4.abs() < epsilon && _onSegment(q1, p2, q2)) return true;
+
+    return false;
+  }
+
+  double _orientation(Offset a, Offset b, Offset c) {
+    final cross = (b.dx - a.dx) * (c.dy - a.dy) - (b.dy - a.dy) * (c.dx - a.dx);
+    return cross;
+  }
+
+  bool _onSegment(Offset a, Offset b, Offset c) {
+    return b.dx <= math.max(a.dx, c.dx) + 1e-6 &&
+        b.dx >= math.min(a.dx, c.dx) - 1e-6 &&
+        b.dy <= math.max(a.dy, c.dy) + 1e-6 &&
+        b.dy >= math.min(a.dy, c.dy) - 1e-6;
+  }
+  
+  Future<void> _saveAllModifiedPages() async {
+    if (widget.documentId == null) return;
+    
+    final authService = AuthService();
+    
+    // Save all pages that have drawings
+    for (final entry in _pageDrawings.entries) {
+      final pageIndex = entry.key;
+      final paths = entry.value;
+      
+      try {
+        final pathsJson = paths.map((p) => p.toJson()).toList();
+        await authService.saveDrawingList(
+          widget.documentId!,
+          pageIndex,
+          pathsJson,
+        );
+      } catch (e) {
+        debugPrint('Error saving drawings for page $pageIndex: $e');
+      }
+    }
+  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -202,18 +486,61 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         children: [
           // Canvas with InteractiveViewer
           Positioned.fill(
-            child: InteractiveViewer(
-              transformationController: _transformationController,
-              minScale: 0.1,
-              maxScale: 4.0,
-              boundaryMargin: const EdgeInsets.all(200),
-              constrained: false,
-              panEnabled: !_isDrawingMode, // Disable panning in drawing mode
-              scaleEnabled: !_isDrawingMode, // Disable zooming in drawing mode
-              child: _buildCanvas(),
-            ),
+            child: _isDrawingMode
+                ? Listener(
+                    onPointerDown: (event) {
+                      _pointerCount++;
+                      // Only start drawing with exactly one finger
+                      if (_pointerCount == 1) {
+                        _handleDrawingStart(event.localPosition);
+                      } else if (_currentPath != null) {
+                        // End current drawing if second finger touches
+                        _handleDrawingEnd();
+                      }
+                    },
+                    onPointerMove: (event) {
+                      // Only draw with exactly one finger
+                      if (_pointerCount == 1) {
+                        _handleDrawingUpdate(event.localPosition);
+                      }
+                    },
+                    onPointerUp: (event) {
+                      if (_pointerCount == 1 && _currentPath != null) {
+                        _handleDrawingEnd();
+                      }
+                      _pointerCount--;
+                      if (_pointerCount < 0) _pointerCount = 0;
+                    },
+                    onPointerCancel: (event) {
+                      if (_currentPath != null) {
+                        _handleDrawingEnd();
+                      }
+                      _pointerCount--;
+                      if (_pointerCount < 0) _pointerCount = 0;
+                    },
+                    child: InteractiveViewer(
+                      transformationController: _transformationController,
+                      minScale: 0.1,
+                      maxScale: 4.0,
+                      boundaryMargin: const EdgeInsets.all(200),
+                      constrained: false,
+                      panEnabled: false, // Disable single-finger pan
+                      scaleEnabled: true, // Enable two-finger zoom/pan
+                      child: _buildCanvas(),
+                    ),
+                  )
+                : InteractiveViewer(
+                    transformationController: _transformationController,
+                    minScale: 0.1,
+                    maxScale: 4.0,
+                    boundaryMargin: const EdgeInsets.all(200),
+                    constrained: false,
+                    panEnabled: true,
+                    scaleEnabled: true,
+                    child: _buildCanvas(),
+                  ),
           ),
-          
+
           // Drawing toolbar (when in drawing mode)
           if (_isDrawingMode)
             Positioned(
@@ -222,7 +549,7 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
               right: 0,
               child: _buildDrawingToolbar(),
             ),
-            
+
           // Drawing mode toggle button
           Positioned(
             bottom: 16,
@@ -231,15 +558,15 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
               onPressed: () async {
                 if (_isDrawingMode) {
                   // Save all modified pages before exiting drawing mode
-                  for (var pageIndex in _pageDrawings.keys) {
-                    await _saveDrawingsForPage(pageIndex);
-                  }
+                  await _saveAllModifiedPages();
                 }
                 setState(() {
                   _isDrawingMode = !_isDrawingMode;
                 });
               },
-              backgroundColor: _isDrawingMode ? const Color(0xffbd6051) : const Color(0xff102837),
+              backgroundColor: _isDrawingMode
+                  ? const Color(0xffbd6051)
+                  : const Color(0xff102837),
               child: Icon(
                 _isDrawingMode ? Icons.check : Icons.draw,
                 color: _isDrawingMode ? Colors.white : const Color(0xffc7ffbf),
@@ -357,123 +684,19 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
       totalHeight += _getPageHeight(i) + _pageSpacing;
     }
     totalHeight += _pageSpacing; // Extra spacing at the end
-    
+
     final canvasWidth = _pageWidth + _pageSpacing * 2;
-    
+
     return SizedBox(
       width: canvasWidth,
       height: totalHeight,
       child: Stack(
         children: [
           // Render each page
-          for (int i = 0; i < widget.pages.length; i++)
-            _buildPage(i),
-            
-          // Drawing layer (when in drawing mode)
-          if (_isDrawingMode)
-            Positioned.fill(
-              child: _buildDrawingLayer(Size(canvasWidth, totalHeight)),
-            ),
+          for (int i = 0; i < widget.pages.length; i++) _buildPage(i),
         ],
       ),
     );
-  }
-  
-  Widget _buildDrawingLayer(Size canvasSize) {
-    return Listener(
-      behavior: HitTestBehavior.opaque,
-      onPointerDown: (details) {
-        setState(() {
-          _isDrawing = true;
-          if (_drawMode == DrawingMode.erase) {
-            return;
-          }
-          
-          // Determine which page this point belongs to
-          final pageIndex = _getPageIndexAtPoint(details.localPosition);
-          if (pageIndex != null) {
-            _pageDrawings[pageIndex] ??= [];
-            _pageDrawings[pageIndex]!.add(DrawingPath(
-              points: [details.localPosition],
-              color: _selectedColor,
-              strokeWidth: _strokeWidth,
-            ));
-          }
-        });
-      },
-      onPointerMove: (details) {
-        if (_isDrawing) {
-          setState(() {
-            if (_drawMode == DrawingMode.erase) {
-              // Erase paths that are touched
-              for (var pageIndex in _pageDrawings.keys) {
-                _pageDrawings[pageIndex]!.removeWhere((path) {
-                  for (final point in path.points) {
-                    if ((point - details.localPosition).distance < path.strokeWidth * 2) {
-                      return true;
-                    }
-                  }
-                  return false;
-                });
-              }
-            } else {
-              // Add point to current path
-              final pageIndex = _getPageIndexAtPoint(details.localPosition);
-              if (pageIndex != null && _pageDrawings[pageIndex] != null && _pageDrawings[pageIndex]!.isNotEmpty) {
-                final currentPath = _pageDrawings[pageIndex]!.last;
-                final updatedPoints = List<Offset>.from(currentPath.points)
-                  ..add(details.localPosition);
-                _pageDrawings[pageIndex]![_pageDrawings[pageIndex]!.length - 1] = DrawingPath(
-                  points: updatedPoints,
-                  color: currentPath.color,
-                  strokeWidth: currentPath.strokeWidth,
-                );
-              }
-            }
-          });
-        }
-      },
-      onPointerUp: (details) {
-        setState(() {
-          _isDrawing = false;
-        });
-      },
-      onPointerCancel: (details) {
-        setState(() {
-          _isDrawing = false;
-        });
-      },
-      child: CustomPaint(
-        painter: _AllDrawingsPainter(
-          pageDrawings: _pageDrawings,
-        ),
-        size: canvasSize,
-      ),
-    );
-  }
-  
-  int? _getPageIndexAtPoint(Offset point) {
-    double currentY = _pageSpacing;
-    
-    for (int i = 0; i < widget.pages.length; i++) {
-      final pageHeight = _getPageHeight(i);
-      final pageTop = currentY;
-      final pageBottom = currentY + pageHeight;
-      
-      final pageLeft = _pageSpacing;
-      final pageRight = _pageSpacing + _pageWidth;
-      
-      // Check if point is within this page's bounds (both X and Y)
-      if (point.dy >= pageTop && point.dy <= pageBottom &&
-          point.dx >= pageLeft && point.dx <= pageRight) {
-        return i;
-      }
-      
-      currentY += pageHeight + _pageSpacing;
-    }
-    
-    // Point is outside all pages - don't allow drawing
-    return null;
   }
 
   Widget _buildPage(int index) {
@@ -481,10 +704,10 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
     for (int i = 0; i < index; i++) {
       yOffset += _getPageHeight(i) + _pageSpacing;
     }
-    
+
     final page = widget.pages[index];
     final pageHeight = _getPageHeight(index);
-    
+
     return Positioned(
       left: _pageSpacing,
       top: yOffset,
@@ -520,7 +743,8 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                 bottom: 8,
                 right: 8,
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.6),
                     borderRadius: BorderRadius.circular(12),
@@ -535,17 +759,18 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                   ),
                 ),
               ),
-              // Tap indicator overlay
-              Positioned.fill(
-                child: Material(
-                  color: Colors.transparent,
-                  child: InkWell(
-                    onTap: () => _handlePageTap(index),
-                    splashColor: const Color(0xffc7ffbf).withOpacity(0.3),
-                    highlightColor: const Color(0xffc7ffbf).withOpacity(0.1),
+              // Tap indicator overlay (only when not in drawing mode)
+              if (!_isDrawingMode)
+                Positioned.fill(
+                  child: Material(
+                    color: Colors.transparent,
+                    child: InkWell(
+                      onTap: () => _handlePageTap(index),
+                      splashColor: const Color(0xffc7ffbf).withOpacity(0.3),
+                      highlightColor: const Color(0xffc7ffbf).withOpacity(0.1),
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -554,17 +779,30 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
   }
 
   Widget _buildPageContent(DocumentPageData page, int index) {
+    // Get drawings for this page (including current drawing if it's this page)
+    // Don't show the eraser path while erasing (it should be invisible)
+    final drawings = _pageDrawings[index] ?? [];
+    final allDrawings = _currentDrawingPage == index && 
+                       _currentPath != null && 
+                       _drawMode != DrawingMode.erase
+        ? [...drawings, _currentPath!]
+        : drawings;
+    
+    if (allDrawings.isNotEmpty) {
+      debugPrint('Building page $index content with ${allDrawings.length} drawings');
+    }
+    
     if (page.type == 'DigitalPage' && page.controller != null) {
       return _DigitalPagePreview(
         key: ValueKey('digital_$index\_$_refreshKey'),
         controller: page.controller!,
-        paths: _pageDrawings[index] ?? [],
+        drawings: allDrawings,
       );
     } else if (page.type == 'ImagePage' && page.imageBytes != null) {
       return _ImagePagePreview(
         key: ValueKey('image_$index\_$_refreshKey'),
         imageBytes: page.imageBytes!,
-        paths: _pageDrawings[index] ?? [],
+        drawings: allDrawings,
         onImageLoaded: (aspectRatio) {
           // Update page height based on actual image aspect ratio
           final newHeight = _pageWidth / aspectRatio;
@@ -584,12 +822,12 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
 /// Preview of a digital page (non-interactive)
 class _DigitalPagePreview extends StatelessWidget {
   final FleatherController controller;
-  final List<DrawingPath> paths;
+  final List<DrawingPath> drawings;
 
   const _DigitalPagePreview({
     super.key,
     required this.controller,
-    required this.paths,
+    required this.drawings,
   });
 
   @override
@@ -598,7 +836,6 @@ class _DigitalPagePreview extends StatelessWidget {
       color: const Color(0xfffafafa),
       child: Stack(
         children: [
-          // Text editor (non-interactive)
           Positioned.fill(
             child: AbsorbPointer(
               child: Padding(
@@ -607,13 +844,11 @@ class _DigitalPagePreview extends StatelessWidget {
               ),
             ),
           ),
-          // Drawing paths overlay (non-interactive)
-          if (paths.isNotEmpty)
+          // Drawing overlay
+          if (drawings.isNotEmpty)
             Positioned.fill(
-              child: IgnorePointer(
-                child: CustomPaint(
-                  painter: _PathsPainter(paths: paths),
-                ),
+              child: CustomPaint(
+                painter: _DrawingPainter(paths: drawings),
               ),
             ),
         ],
@@ -625,13 +860,13 @@ class _DigitalPagePreview extends StatelessWidget {
 /// Preview of an image page (non-interactive)
 class _ImagePagePreview extends StatefulWidget {
   final List<int> imageBytes;
-  final List<DrawingPath> paths;
+  final List<DrawingPath> drawings;
   final Function(double aspectRatio)? onImageLoaded;
 
   const _ImagePagePreview({
     super.key,
     required this.imageBytes,
-    required this.paths,
+    required this.drawings,
     this.onImageLoaded,
   });
 
@@ -649,9 +884,21 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
     _loadImage();
   }
 
+  @override
+  void didUpdateWidget(_ImagePagePreview oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // If drawings changed, trigger a rebuild
+    if (widget.drawings.length != oldWidget.drawings.length) {
+      debugPrint('_ImagePagePreview: Drawings changed from ${oldWidget.drawings.length} to ${widget.drawings.length}');
+      setState(() {
+        // Force rebuild with new drawings
+      });
+    }
+  }
+
   Future<void> _loadImage() async {
     try {
-      final Uint8List bytes = widget.imageBytes is Uint8List 
+      final Uint8List bytes = widget.imageBytes is Uint8List
           ? widget.imageBytes as Uint8List
           : Uint8List.fromList(widget.imageBytes);
       final codec = await ui.instantiateImageCodec(bytes);
@@ -661,7 +908,7 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
           _image = frame.image;
           _isLoading = false;
         });
-        
+
         // Notify parent of the image aspect ratio
         if (widget.onImageLoaded != null && _image != null) {
           final aspectRatio = _image!.width / _image!.height;
@@ -700,13 +947,13 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
           // Add back the padding we negated to get the full canvas size
           final fullWidth = constraints.maxWidth + 32; // 16px on each side
           final fullHeight = constraints.maxHeight + 32;
-          
+
           return CustomPaint(
             painter: _ImageWithPathsPainter(
               image: _image!,
-              paths: widget.paths,
               containerSize: Size(fullWidth, fullHeight),
               padding: 16.0,
+              paths: widget.drawings,
             ),
             size: Size(fullWidth, fullHeight),
           );
@@ -716,48 +963,18 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
   }
 }
 
-/// Custom painter for drawing paths only
-class _PathsPainter extends CustomPainter {
-  final List<DrawingPath> paths;
-
-  _PathsPainter({required this.paths});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    for (final path in paths) {
-      if (path.points.isEmpty) continue;
-
-      final paint = Paint()
-        ..color = path.color
-        ..strokeWidth = path.strokeWidth
-        ..strokeCap = StrokeCap.round
-        ..strokeJoin = StrokeJoin.round
-        ..style = PaintingStyle.stroke;
-
-      for (int i = 0; i < path.points.length - 1; i++) {
-        canvas.drawLine(path.points[i], path.points[i + 1], paint);
-      }
-    }
-  }
-
-  @override
-  bool shouldRepaint(_PathsPainter oldDelegate) {
-    return oldDelegate.paths.length != paths.length;
-  }
-}
-
-/// Custom painter for image with paths overlay
+/// Custom painter for image with drawings
 class _ImageWithPathsPainter extends CustomPainter {
   final ui.Image image;
-  final List<DrawingPath> paths;
   final Size containerSize;
   final double padding;
+  final List<DrawingPath> paths;
 
   _ImageWithPathsPainter({
     required this.image,
-    required this.paths,
     required this.containerSize,
     this.padding = 0.0,
+    this.paths = const [],
   });
 
   @override
@@ -765,10 +982,10 @@ class _ImageWithPathsPainter extends CustomPainter {
     // Calculate available space for image (accounting for padding)
     final availableWidth = containerSize.width - (padding * 2);
     final availableHeight = containerSize.height - (padding * 2);
-    
+
     final imageAspect = image.width / image.height;
     final availableAspect = availableWidth / availableHeight;
-    
+
     // Calculate image display rect with padding
     Rect dstRect;
     if (availableAspect > imageAspect) {
@@ -782,13 +999,13 @@ class _ImageWithPathsPainter extends CustomPainter {
       final offsetY = padding + (availableHeight - scaledHeight) / 2;
       dstRect = Rect.fromLTWH(padding, offsetY, availableWidth, scaledHeight);
     }
-    
+
     // Draw image with shadow effect
     final shadowPaint = Paint()
       ..color = Colors.black.withOpacity(0.3)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
     canvas.drawRect(dstRect.shift(const Offset(0, 4)), shadowPaint);
-    
+
     // Draw image maintaining aspect ratio
     final srcRect = Rect.fromLTWH(
       0,
@@ -797,12 +1014,9 @@ class _ImageWithPathsPainter extends CustomPainter {
       image.height.toDouble(),
     );
     canvas.drawImageRect(image, srcRect, dstRect, Paint());
-
-    // Draw paths - they're stored in full canvas coordinates from the drawing screen
-    // Just draw them directly
+    
+    // Draw paths on top of image
     for (final path in paths) {
-      if (path.points.isEmpty) continue;
-
       final paint = Paint()
         ..color = path.color
         ..strokeWidth = path.strokeWidth
@@ -810,59 +1024,67 @@ class _ImageWithPathsPainter extends CustomPainter {
         ..strokeJoin = StrokeJoin.round
         ..style = PaintingStyle.stroke;
 
-      for (int i = 0; i < path.points.length - 1; i++) {
-        canvas.drawLine(path.points[i], path.points[i + 1], paint);
+      if (path.points.isNotEmpty) {
+        final drawPath = Path();
+        drawPath.moveTo(path.points[0].dx, path.points[0].dy);
+        for (int i = 1; i < path.points.length; i++) {
+          drawPath.lineTo(path.points[i].dx, path.points[i].dy);
+        }
+        canvas.drawPath(drawPath, paint);
       }
     }
   }
 
   @override
   bool shouldRepaint(_ImageWithPathsPainter oldDelegate) {
-    return oldDelegate.image != image || 
-           oldDelegate.paths.length != paths.length ||
-           oldDelegate.containerSize != containerSize ||
-           oldDelegate.padding != padding;
+    // Check if paths changed by comparing list contents
+    bool pathsChanged = oldDelegate.paths.length != paths.length;
+    if (!pathsChanged && paths.isNotEmpty) {
+      // Quick check: compare references (if they're different objects, repaint)
+      pathsChanged = !identical(oldDelegate.paths, paths);
+    }
+    
+    return oldDelegate.image != image ||
+        oldDelegate.containerSize != containerSize ||
+        oldDelegate.padding != padding ||
+        pathsChanged;
   }
 }
 
-/// Custom painter that draws all paths from all pages
-class _AllDrawingsPainter extends CustomPainter {
-  final Map<int, List<DrawingPath>> pageDrawings;
+/// Custom painter for drawing paths
+class _DrawingPainter extends CustomPainter {
+  final List<DrawingPath> paths;
 
-  _AllDrawingsPainter({
-    required this.pageDrawings,
-  });
+  _DrawingPainter({required this.paths});
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Draw all paths from all pages
-    for (final paths in pageDrawings.values) {
-      for (final path in paths) {
-        if (path.points.isEmpty) continue;
+    if (paths.isNotEmpty) {
+      debugPrint('_DrawingPainter painting ${paths.length} paths on canvas size: $size');
+    }
+    for (final path in paths) {
+      final paint = Paint()
+        ..color = path.color
+        ..strokeWidth = path.strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
 
-        final paint = Paint()
-          ..color = path.color
-          ..strokeWidth = path.strokeWidth
-          ..strokeCap = StrokeCap.round
-          ..strokeJoin = StrokeJoin.round
-          ..style = PaintingStyle.stroke;
-
-        for (int i = 0; i < path.points.length - 1; i++) {
-          canvas.drawLine(path.points[i], path.points[i + 1], paint);
+      if (path.points.isNotEmpty) {
+        final drawPath = Path();
+        drawPath.moveTo(path.points[0].dx, path.points[0].dy);
+        for (int i = 1; i < path.points.length; i++) {
+          drawPath.lineTo(path.points[i].dx, path.points[i].dy);
         }
+        canvas.drawPath(drawPath, paint);
       }
     }
   }
 
   @override
-  bool shouldRepaint(_AllDrawingsPainter oldDelegate) {
-    // Simple check - repaint if any page has different number of paths
-    if (oldDelegate.pageDrawings.length != pageDrawings.length) return true;
-    for (var key in pageDrawings.keys) {
-      if (!oldDelegate.pageDrawings.containsKey(key)) return true;
-      if (oldDelegate.pageDrawings[key]!.length != pageDrawings[key]!.length) return true;
-    }
-    return false;
+  bool shouldRepaint(_DrawingPainter oldDelegate) {
+    // Repaint if path count changed or if it's a different list instance
+    return oldDelegate.paths.length != paths.length || !identical(oldDelegate.paths, paths);
   }
 }
 

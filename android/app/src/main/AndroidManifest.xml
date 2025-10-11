@@ -1,6 +1,4 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Camera permission for document scanner -->
-    <uses-permission android:name="android.permission.CAMERA" />
     <application
         android:label="helloworld"
         android:name="${applicationName}"
