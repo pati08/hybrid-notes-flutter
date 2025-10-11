@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:fleather/fleather.dart';
@@ -22,12 +23,16 @@ class ImageDrawingScreen extends StatefulWidget {
 
 class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
   Color _selectedColor = Colors.red;
-  // ignore: unused_field
   double _strokeWidth = 5.0;
   DrawingMode _mode = DrawingMode.draw;
   ui.Image? _backgroundImage;
   bool _isLoading = true;
   late final TransformationController _transformationController;
+
+  // Drawing state
+  final List<DrawingPath> _paths = [];
+  final List<DrawingPath> _undonePaths = [];
+  DrawingPath? _currentPath;
 
   @override
   void initState() {
@@ -35,19 +40,19 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
     _transformationController = TransformationController();
     _loadBackground();
     _loadPaths();
-    
+
     // Set initial scale to 90% centered after first frame
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         final RenderBox? box = context.findRenderObject() as RenderBox?;
         if (box != null) {
           final size = box.size;
-          final scale = 0.9;
+          const scale = 0.9;
           final offsetX = (size.width * (1 - scale)) / 2;
           final offsetY = (size.height * (1 - scale)) / 2;
           _transformationController.value = Matrix4.identity()
-            ..translate(offsetX, offsetY)
-            ..scale(scale);
+            ..translateByDouble(offsetX, offsetY, 0.0, 0.0)
+            ..scaleByDouble(scale, 1.0, 1.0, 1.0);
         }
       }
     });
@@ -93,8 +98,15 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
         final loadedPaths = result.drawingList!
             .map((json) => DrawingPath.fromJson(json as Map<String, dynamic>))
             .toList();
-        // TODO: Store and display loaded paths
-        debugPrint('Loaded ${loadedPaths.length} drawing paths');
+        if (mounted) {
+          setState(() {
+            _paths
+              ..clear()
+              ..addAll(loadedPaths);
+            _undonePaths.clear();
+            debugPrint('Loaded ${_paths.length} drawing paths');
+          });
+        }
       }
     } catch (e) {
       debugPrint('Error loading paths: $e');
@@ -102,18 +114,172 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
   }
 
   void _undo() {
-    // TODO: Implement undo functionality
-    debugPrint('Undo not implemented');
+    if (_paths.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      final removedPath = _paths.removeLast();
+      _undonePaths.add(removedPath);
+    });
   }
 
   void _redo() {
-    // TODO: Implement redo functionality
-    debugPrint('Redo not implemented');
+    if (_undonePaths.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      final restoredPath = _undonePaths.removeLast();
+      _paths.add(restoredPath);
+    });
   }
 
   void _clear() {
-    // TODO: Implement clear functionality
-    debugPrint('Clear not implemented');
+    if (_paths.isEmpty && _undonePaths.isEmpty) {
+      return;
+    }
+
+    setState(() {
+      _paths.clear();
+      _undonePaths.clear();
+      _currentPath = null;
+    });
+  }
+
+  void _erasePaths(DrawingPath eraserPath) {
+    final eraserPoints = eraserPath.points;
+    
+    // Remove paths that intersect with the eraser
+    _paths.removeWhere((path) {
+      if (path.points.isEmpty || eraserPoints.isEmpty) {
+        return false;
+      }
+
+      final tolerance = math.max(path.strokeWidth, eraserPath.strokeWidth);
+
+      // Quick point proximity check (covers dots and very short segments)
+      for (final pathPoint in path.points) {
+        for (final eraserPoint in eraserPoints) {
+          if ((pathPoint - eraserPoint).distance <= tolerance) {
+            return true;
+          }
+        }
+      }
+
+      // Handle single-point eraser paths against drawn segments
+      if (eraserPoints.length == 1 && path.points.length > 1) {
+        final eraserPoint = eraserPoints.first;
+        for (int i = 0; i < path.points.length - 1; i++) {
+          final segmentStart = path.points[i];
+          final segmentEnd = path.points[i + 1];
+          if (_distancePointToSegment(eraserPoint, segmentStart, segmentEnd) <= tolerance) {
+            return true;
+          }
+        }
+      }
+
+      // Handle single-point drawing paths against eraser segments
+      if (path.points.length == 1 && eraserPoints.length > 1) {
+        final pathPoint = path.points.first;
+        for (int i = 0; i < eraserPoints.length - 1; i++) {
+          final eraserStart = eraserPoints[i];
+          final eraserEnd = eraserPoints[i + 1];
+          if (_distancePointToSegment(pathPoint, eraserStart, eraserEnd) <= tolerance) {
+            return true;
+          }
+        }
+      }
+
+      // Check for segment proximity/intersection between the drawing and eraser paths
+      if (path.points.length > 1 && eraserPoints.length > 1) {
+        for (int i = 0; i < path.points.length - 1; i++) {
+          final pathStart = path.points[i];
+          final pathEnd = path.points[i + 1];
+          for (int j = 0; j < eraserPoints.length - 1; j++) {
+            final eraserStart = eraserPoints[j];
+            final eraserEnd = eraserPoints[j + 1];
+            if (_distanceBetweenSegments(pathStart, pathEnd, eraserStart, eraserEnd) <= tolerance) {
+              return true;
+            }
+          }
+        }
+      }
+
+      return false;
+    });
+  }
+
+  double _distancePointToSegment(Offset point, Offset segmentStart, Offset segmentEnd) {
+    final segment = segmentEnd - segmentStart;
+    final lengthSquared = segment.dx * segment.dx + segment.dy * segment.dy;
+
+    if (lengthSquared == 0.0) {
+      return (point - segmentStart).distance;
+    }
+
+    final t = ((point.dx - segmentStart.dx) * segment.dx +
+            (point.dy - segmentStart.dy) * segment.dy) /
+        lengthSquared;
+    final clampedT = t.clamp(0.0, 1.0) as double;
+    final projection = Offset(
+      segmentStart.dx + clampedT * segment.dx,
+      segmentStart.dy + clampedT * segment.dy,
+    );
+
+    return (point - projection).distance;
+  }
+
+  double _distanceBetweenSegments(
+    Offset p1,
+    Offset p2,
+    Offset q1,
+    Offset q2,
+  ) {
+    if (_segmentsIntersect(p1, p2, q1, q2)) {
+      return 0.0;
+    }
+
+    final distances = [
+      _distancePointToSegment(p1, q1, q2),
+      _distancePointToSegment(p2, q1, q2),
+      _distancePointToSegment(q1, p1, p2),
+      _distancePointToSegment(q2, p1, p2),
+    ];
+
+    return distances.reduce(math.min);
+  }
+
+  bool _segmentsIntersect(Offset p1, Offset p2, Offset q1, Offset q2) {
+    const double epsilon = 1e-6;
+
+    final o1 = _orientation(p1, p2, q1);
+    final o2 = _orientation(p1, p2, q2);
+    final o3 = _orientation(q1, q2, p1);
+    final o4 = _orientation(q1, q2, p2);
+
+    if ((o1 * o2) < 0 && (o3 * o4) < 0) {
+      return true;
+    }
+
+    if (o1.abs() < epsilon && _onSegment(p1, q1, p2)) return true;
+    if (o2.abs() < epsilon && _onSegment(p1, q2, p2)) return true;
+    if (o3.abs() < epsilon && _onSegment(q1, p1, q2)) return true;
+    if (o4.abs() < epsilon && _onSegment(q1, p2, q2)) return true;
+
+    return false;
+  }
+
+  double _orientation(Offset a, Offset b, Offset c) {
+    final cross = (b.dx - a.dx) * (c.dy - a.dy) - (b.dy - a.dy) * (c.dx - a.dx);
+    return cross;
+  }
+
+  bool _onSegment(Offset a, Offset b, Offset c) {
+    return b.dx <= math.max(a.dx, c.dx) + 1e-6 &&
+        b.dx >= math.min(a.dx, c.dx) - 1e-6 &&
+        b.dy <= math.max(a.dy, c.dy) + 1e-6 &&
+        b.dy >= math.min(a.dy, c.dy) - 1e-6;
   }
 
   Future<bool> _savePaths() async {
@@ -124,9 +290,8 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
     try {
       final authService = AuthService();
-      // TODO: Collect actual drawing paths
-      final pathsJson = <Map<String, dynamic>>[];
-      
+      final pathsJson = _paths.map((path) => path.toJson()).toList();
+
       final success = await authService.saveDrawingList(
         widget.documentId!,
         widget.pageIndex!,
@@ -197,17 +362,17 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.undo),
-                    onPressed: _undo,
+                    onPressed: _paths.isNotEmpty ? _undo : null,
                     tooltip: 'Undo',
                   ),
                   IconButton(
                     icon: const Icon(Icons.redo),
-                    onPressed: _redo,
+                    onPressed: _undonePaths.isNotEmpty ? _redo : null,
                     tooltip: 'Redo',
                   ),
                   IconButton(
                     icon: const Icon(Icons.clear),
-                    onPressed: _clear,
+                    onPressed: _paths.isNotEmpty ? _clear : null,
                     tooltip: 'Clear All',
                   ),
                   const VerticalDivider(),
@@ -278,18 +443,75 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
               ),
             ),
           ),
-          // Drawing canvas with zoom capability
           Expanded(
-            child: Container(
-              color: widget.page.type == 'DigitalPage' 
-                  ? const Color(0xfffafafa) 
-                  : const Color(0xffe8e8e8), // Page background color
-              child: Center(
-                child: _TwoFingerInteractiveViewer(
-                  transformationController: _transformationController,
-                  minScale: 0.5,
-                  maxScale: 4.0,
-                  child: _buildDrawingCanvas(),
+            child: GestureDetector(
+              onPanStart: (details) {
+                final renderBox = context.findRenderObject() as RenderBox?;
+                if (renderBox == null) return;
+
+                final localPosition = renderBox.globalToLocal(details.globalPosition);
+                setState(() {
+                  _currentPath = DrawingPath(
+                    points: [localPosition],
+                    color: _mode == DrawingMode.erase ? Colors.transparent : _selectedColor,
+                    strokeWidth: _strokeWidth,
+                    mode: _mode,
+                  );
+                });
+              },
+              onPanUpdate: (details) {
+                if (_currentPath == null) return;
+
+                final renderBox = context.findRenderObject() as RenderBox?;
+                if (renderBox == null) return;
+
+                final localPosition = renderBox.globalToLocal(details.globalPosition);
+                setState(() {
+                  // Add adaptive point sampling to reduce segmentation
+                  final currentPoints = _currentPath!.points;
+                  if (currentPoints.isNotEmpty) {
+                    final lastPoint = currentPoints.last;
+                    final distance = (localPosition - lastPoint).distance;
+                    
+                    // Only add point if it's far enough from the last point
+                    // This reduces segmentation during fast strokes
+                    if (distance > 2.0) {
+                      _currentPath = _currentPath!.copyWith(
+                        points: [...currentPoints, localPosition],
+                      );
+                    }
+                  } else {
+                    // First point - always add it
+                    _currentPath = _currentPath!.copyWith(
+                      points: [localPosition],
+                    );
+                  }
+                });
+              },
+              onPanEnd: (details) {
+                if (_currentPath == null) return;
+
+                setState(() {
+                  if (_currentPath!.mode == DrawingMode.erase) {
+                    _erasePaths(_currentPath!);
+                  } else {
+                    _paths.add(_currentPath!);
+                  }
+                  _undonePaths.clear();
+                  _currentPath = null;
+                });
+              },
+              child: Container(
+                color: widget.page.type == 'DigitalPage'
+                    ? const Color(0xfffafafa)
+                    : const Color(0xffe8e8e8),
+                child: Center(
+                  child: _TwoFingerInteractiveViewer(
+                    transformationController: _transformationController,
+                    minScale: 0.5,
+                    maxScale: 4.0,
+                    child: _buildDrawingCanvas(),
+                  ),
                 ),
               ),
             ),
@@ -311,8 +533,23 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
               color: const Color(0xfffafafa),
               padding: const EdgeInsets.all(16.0),
               child: widget.page.controller != null
-                  ? AbsorbPointer(
-                      child: FleatherEditor(controller: widget.page.controller!),
+                  ? Stack(
+                      children: [
+                        AbsorbPointer(
+                          child: FleatherEditor(
+                            controller: widget.page.controller!,
+                          ),
+                        ),
+                        if (_paths.isNotEmpty || _currentPath != null)
+                          Positioned.fill(
+                            child: CustomPaint(
+                              painter: _PathPainter(
+                                paths: _paths,
+                                inProgressPath: _currentPath,
+                              ),
+                            ),
+                          ),
+                      ],
                     )
                   : const SizedBox.shrink(),
             ),
@@ -326,12 +563,13 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
           if (_backgroundImage == null) {
             return const SizedBox.shrink();
           }
-          
+
           // Calculate the size to fit the image while preserving aspect ratio
-          final imageAspect = _backgroundImage!.width / _backgroundImage!.height;
+          final imageAspect =
+              _backgroundImage!.width / _backgroundImage!.height;
           final availableWidth = constraints.maxWidth - 16; // Small padding
           final availableHeight = constraints.maxHeight - 16;
-          
+
           double displayWidth, displayHeight;
           if (availableWidth / availableHeight > imageAspect) {
             // Height is the limiting factor
@@ -342,18 +580,24 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
             displayWidth = availableWidth;
             displayHeight = displayWidth / imageAspect;
           }
-          
+
           final imageRect = Rect.fromCenter(
             center: Offset(constraints.maxWidth / 2, constraints.maxHeight / 2),
             width: displayWidth,
             height: displayHeight,
           );
-          
+
           return CustomPaint(
             painter: _ImagePainter(
               image: _backgroundImage!,
               imageDisplayRect: imageRect,
             ),
+            foregroundPainter: (_paths.isNotEmpty || _currentPath != null)
+                ? _PathPainter(
+                    paths: _paths,
+                    inProgressPath: _currentPath,
+                  )
+                : null,
             child: SizedBox(
               width: constraints.maxWidth,
               height: constraints.maxHeight,
@@ -363,7 +607,6 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
       );
     }
   }
-
 
   Widget _buildColorButton(Color color) {
     final isSelected = _selectedColor == color;
@@ -401,12 +644,28 @@ class DrawingPath {
   final List<Offset> points;
   final Color color;
   final double strokeWidth;
+  final DrawingMode mode;
 
   DrawingPath({
     required this.points,
     required this.color,
     required this.strokeWidth,
+    required this.mode,
   });
+
+  DrawingPath copyWith({
+    List<Offset>? points,
+    Color? color,
+    double? strokeWidth,
+    DrawingMode? mode,
+  }) {
+    return DrawingPath(
+      points: points ?? this.points,
+      color: color ?? this.color,
+      strokeWidth: strokeWidth ?? this.strokeWidth,
+      mode: mode ?? this.mode,
+    );
+  }
 
   // Convert to API format
   Map<String, dynamic> toJson() {
@@ -441,7 +700,104 @@ class DrawingPath {
       points: points,
       color: color,
       strokeWidth: (json['stroke_width'] as num).toDouble(),
+      mode: DrawingMode.draw, // Default to draw mode for loaded paths
     );
+  }
+}
+
+/// Custom painter for drawing paths
+class _PathPainter extends CustomPainter {
+  final List<DrawingPath> paths;
+  final DrawingPath? inProgressPath;
+
+  _PathPainter({
+    required this.paths,
+    this.inProgressPath,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    // Draw completed paths
+    for (final path in paths) {
+      final paint = Paint()
+        ..color = path.color
+        ..strokeWidth = path.strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
+
+      if (path.points.isNotEmpty) {
+        final drawPath = _createSmoothPath(path.points);
+        canvas.drawPath(drawPath, paint);
+      }
+    }
+
+    // Draw in-progress path
+    if (inProgressPath != null) {
+      final paint = Paint()
+        ..color = inProgressPath!.color
+        ..strokeWidth = inProgressPath!.strokeWidth
+        ..strokeCap = StrokeCap.round
+        ..strokeJoin = StrokeJoin.round
+        ..style = PaintingStyle.stroke;
+
+      if (inProgressPath!.points.isNotEmpty) {
+        final drawPath = _createSmoothPath(inProgressPath!.points);
+        canvas.drawPath(drawPath, paint);
+      }
+    }
+  }
+
+  /// Creates a smooth path using quadratic Bezier curves
+  Path _createSmoothPath(List<Offset> points) {
+    final path = Path();
+    
+    if (points.isEmpty) return path;
+    
+    if (points.length == 1) {
+      // Single point - draw a small circle
+      path.addOval(Rect.fromCircle(center: points[0], radius: 1.0));
+      return path;
+    }
+    
+    if (points.length == 2) {
+      // Two points - draw a straight line
+      path.moveTo(points[0].dx, points[0].dy);
+      path.lineTo(points[1].dx, points[1].dy);
+      return path;
+    }
+    
+    // Three or more points - use quadratic Bezier curves for smoothness
+    path.moveTo(points[0].dx, points[0].dy);
+    
+    for (int i = 1; i < points.length - 1; i++) {
+      final current = points[i];
+      final next = points[i + 1];
+      
+      // Calculate control point for smooth curve
+      final controlPoint = Offset(
+        (current.dx + next.dx) / 2,
+        (current.dy + next.dy) / 2,
+      );
+      
+      path.quadraticBezierTo(
+        current.dx, current.dy,
+        controlPoint.dx, controlPoint.dy,
+      );
+    }
+    
+    // Draw to the last point
+    final lastPoint = points.last;
+    path.lineTo(lastPoint.dx, lastPoint.dy);
+    
+    return path;
+  }
+
+  @override
+  bool shouldRepaint(_PathPainter oldDelegate) {
+    return oldDelegate.paths.length != paths.length ||
+        oldDelegate.inProgressPath != inProgressPath ||
+        !identical(oldDelegate.paths, paths);
   }
 }
 
@@ -468,8 +824,8 @@ class _ImagePainter extends CustomPainter {
 
   @override
   bool shouldRepaint(_ImagePainter oldDelegate) {
-    return oldDelegate.image != image || 
-           oldDelegate.imageDisplayRect != imageDisplayRect;
+    return oldDelegate.image != image ||
+        oldDelegate.imageDisplayRect != imageDisplayRect;
   }
 }
 
@@ -489,10 +845,12 @@ class _TwoFingerInteractiveViewer extends StatefulWidget {
   });
 
   @override
-  State<_TwoFingerInteractiveViewer> createState() => _TwoFingerInteractiveViewerState();
+  State<_TwoFingerInteractiveViewer> createState() =>
+      _TwoFingerInteractiveViewerState();
 }
 
-class _TwoFingerInteractiveViewerState extends State<_TwoFingerInteractiveViewer> {
+class _TwoFingerInteractiveViewerState
+    extends State<_TwoFingerInteractiveViewer> {
   int _pointerCount = 0;
   Offset? _initialFocalPoint;
   Matrix4? _initialTransform;
@@ -528,33 +886,34 @@ class _TwoFingerInteractiveViewerState extends State<_TwoFingerInteractiveViewer
     }
 
     final matrix = Matrix4.identity();
-    
+
     // Handle pinch zoom
     if (details.scale != 1.0) {
-      final currentScale = widget.transformationController.value.getMaxScaleOnAxis();
+      final currentScale =
+          widget.transformationController.value.getMaxScaleOnAxis();
       var newScale = (_initialTransform!.getMaxScaleOnAxis() * details.scale)
           .clamp(widget.minScale, widget.maxScale);
-      
+
       // Calculate the scale relative to current
       final scaleChange = newScale / currentScale;
-      
+
       // Get the focal point in the transformed coordinate space
       final focalPoint = details.localFocalPoint;
-      
+
       // Apply zoom around the focal point
       matrix.translate(focalPoint.dx, focalPoint.dy);
       matrix.scale(scaleChange);
       matrix.translate(-focalPoint.dx, -focalPoint.dy);
-      
-      widget.transformationController.value = 
+
+      widget.transformationController.value =
           widget.transformationController.value.clone()..multiply(matrix);
     }
-    
+
     // Handle two-finger pan (when not zooming)
     else if (_pointerCount >= 2 && _initialFocalPoint != null) {
       final delta = details.focalPoint - _initialFocalPoint!;
       _initialFocalPoint = details.focalPoint;
-      
+
       final currentTransform = widget.transformationController.value.clone();
       currentTransform.translate(delta.dx, delta.dy);
       widget.transformationController.value = currentTransform;

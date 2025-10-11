@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -41,11 +42,16 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
   
   // Drawing data storage
   final Map<int, List<DrawingPath>> _pageDrawings = {}; // Map of page index to list of paths
+  final Map<int, List<DrawingPath>> _undonePaths = {}; // Map of page index to undone paths
   DrawingPath? _currentPath; // Currently drawing path
   int? _currentDrawingPage; // Which page we're currently drawing on
   
   // Track number of pointers for two-finger gestures
   int _pointerCount = 0;
+  
+  // Track potential drawing start to prevent unwanted dots during zoom/pan
+  Timer? _drawingStartTimer;
+  bool _isPotentialMultiTouch = false;
 
   @override
   void initState() {
@@ -103,6 +109,7 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
   @override
   void dispose() {
     _transformationController.dispose();
+    _drawingStartTimer?.cancel();
     super.dispose();
   }
 
@@ -255,6 +262,7 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
       points: [localPoint],
       color: _selectedColor,
       strokeWidth: _strokeWidth,
+      mode: _drawMode,
     );
     
     setState(() {
@@ -283,14 +291,38 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
     final localPoint = _screenToPageCoordinates(screenPosition, currentPage);
     
     setState(() {
-      final updatedPath = DrawingPath(
-        points: [..._currentPath!.points, localPoint],
-        color: _currentPath!.color,
-        strokeWidth: _currentPath!.strokeWidth,
-      );
-      _currentPath = updatedPath;
-      if (_drawMode == DrawingMode.erase) {
-        _erasePaths(currentPage, updatedPath);
+      // Add adaptive point sampling to reduce segmentation
+      final currentPoints = _currentPath!.points;
+      if (currentPoints.isNotEmpty) {
+        final lastPoint = currentPoints.last;
+        final distance = (localPoint - lastPoint).distance;
+        
+        // Only add point if it's far enough from the last point
+        // This reduces segmentation during fast strokes
+        if (distance > 2.0) {
+          final updatedPath = DrawingPath(
+            points: [...currentPoints, localPoint],
+            color: _currentPath!.color,
+            strokeWidth: _currentPath!.strokeWidth,
+            mode: _currentPath!.mode,
+          );
+          _currentPath = updatedPath;
+          if (_drawMode == DrawingMode.erase) {
+            _erasePaths(currentPage, updatedPath);
+          }
+        }
+      } else {
+        // First point - always add it
+        final updatedPath = DrawingPath(
+          points: [localPoint],
+          color: _currentPath!.color,
+          strokeWidth: _currentPath!.strokeWidth,
+          mode: _currentPath!.mode,
+        );
+        _currentPath = updatedPath;
+        if (_drawMode == DrawingMode.erase) {
+          _erasePaths(currentPage, updatedPath);
+        }
       }
     });
   }
@@ -310,6 +342,9 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         // Erase mode: remove paths that intersect with the eraser
         _erasePaths(_currentDrawingPage!, _currentPath!);
       }
+      
+      // Clear undone paths for this page when a new action is performed
+      _undonePaths[_currentDrawingPage!]?.clear();
       
       _currentPath = null;
       _currentDrawingPage = null;
@@ -454,6 +489,81 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         b.dy >= math.min(a.dy, c.dy) - 1e-6;
   }
   
+  void _undo() {
+    // Find the most recently modified page with paths to undo
+    int? pageToUndo;
+    for (int i = widget.pages.length - 1; i >= 0; i--) {
+      if (_pageDrawings.containsKey(i) && _pageDrawings[i]!.isNotEmpty) {
+        pageToUndo = i;
+        break;
+      }
+    }
+    
+    if (pageToUndo == null) return;
+    
+    setState(() {
+      final removedPath = _pageDrawings[pageToUndo!]!.removeLast();
+      if (!_undonePaths.containsKey(pageToUndo)) {
+        _undonePaths[pageToUndo] = [];
+      }
+      _undonePaths[pageToUndo]!.add(removedPath);
+    });
+  }
+
+  void _redo() {
+    // Find the most recently modified page with undone paths to redo
+    int? pageToRedo;
+    for (int i = widget.pages.length - 1; i >= 0; i--) {
+      if (_undonePaths.containsKey(i) && _undonePaths[i]!.isNotEmpty) {
+        pageToRedo = i;
+        break;
+      }
+    }
+    
+    if (pageToRedo == null) return;
+    
+    setState(() {
+      final restoredPath = _undonePaths[pageToRedo!]!.removeLast();
+      if (!_pageDrawings.containsKey(pageToRedo)) {
+        _pageDrawings[pageToRedo] = [];
+      }
+      _pageDrawings[pageToRedo]!.add(restoredPath);
+    });
+  }
+
+  void _clear() {
+    bool hasAnyPaths = false;
+    for (final paths in _pageDrawings.values) {
+      if (paths.isNotEmpty) {
+        hasAnyPaths = true;
+        break;
+      }
+    }
+    
+    if (!hasAnyPaths) return;
+    
+    setState(() {
+      _pageDrawings.clear();
+      _undonePaths.clear();
+      _currentPath = null;
+      _currentDrawingPage = null;
+    });
+  }
+
+  bool _canUndo() {
+    for (final paths in _pageDrawings.values) {
+      if (paths.isNotEmpty) return true;
+    }
+    return false;
+  }
+
+  bool _canRedo() {
+    for (final paths in _undonePaths.values) {
+      if (paths.isNotEmpty) return true;
+    }
+    return false;
+  }
+
   Future<void> _saveAllModifiedPages() async {
     if (widget.documentId == null) return;
     
@@ -490,26 +600,52 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                 ? Listener(
                     onPointerDown: (event) {
                       _pointerCount++;
-                      // Only start drawing with exactly one finger
+                      
+                      // Cancel any pending drawing start timer
+                      _drawingStartTimer?.cancel();
+                      
                       if (_pointerCount == 1) {
-                        _handleDrawingStart(event.localPosition);
-                      } else if (_currentPath != null) {
-                        // End current drawing if second finger touches
-                        _handleDrawingEnd();
+                        // Set a flag to indicate we might be starting a multi-touch gesture
+                        _isPotentialMultiTouch = true;
+                        
+                        // Delay drawing start to see if a second finger touches quickly
+                        _drawingStartTimer = Timer(const Duration(milliseconds: 100), () {
+                          // Only start drawing if we still have exactly one finger
+                          // and no second finger touched during the delay
+                          if (_pointerCount == 1 && _isPotentialMultiTouch && mounted) {
+                            _isPotentialMultiTouch = false;
+                            _handleDrawingStart(event.localPosition);
+                          }
+                        });
+                      } else {
+                        // Second finger touched - cancel any potential drawing
+                        _isPotentialMultiTouch = false;
+                        _drawingStartTimer?.cancel();
+                        
+                        if (_currentPath != null) {
+                          // End current drawing if second finger touches
+                          _handleDrawingEnd();
+                        }
                       }
                     },
                     onPointerMove: (event) {
-                      // Only draw with exactly one finger
-                      if (_pointerCount == 1) {
+                      // Only draw with exactly one finger and if we're not in potential multi-touch mode
+                      if (_pointerCount == 1 && !_isPotentialMultiTouch && _currentPath != null) {
                         _handleDrawingUpdate(event.localPosition);
                       }
                     },
                     onPointerUp: (event) {
-                      if (_pointerCount == 1 && _currentPath != null) {
+                      if (_pointerCount == 1 && _currentPath != null && !_isPotentialMultiTouch) {
                         _handleDrawingEnd();
                       }
                       _pointerCount--;
                       if (_pointerCount < 0) _pointerCount = 0;
+                      
+                      // Reset multi-touch flag when all fingers are lifted
+                      if (_pointerCount == 0) {
+                        _isPotentialMultiTouch = false;
+                        _drawingStartTimer?.cancel();
+                      }
                     },
                     onPointerCancel: (event) {
                       if (_currentPath != null) {
@@ -517,6 +653,12 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                       }
                       _pointerCount--;
                       if (_pointerCount < 0) _pointerCount = 0;
+                      
+                      // Reset multi-touch flag when all fingers are lifted
+                      if (_pointerCount == 0) {
+                        _isPotentialMultiTouch = false;
+                        _drawingStartTimer?.cancel();
+                      }
                     },
                     child: InteractiveViewer(
                       transformationController: _transformationController,
@@ -595,6 +737,22 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         scrollDirection: Axis.horizontal,
         child: Row(
           children: [
+            IconButton(
+              icon: const Icon(Icons.undo),
+              onPressed: _canUndo() ? _undo : null,
+              tooltip: 'Undo',
+            ),
+            IconButton(
+              icon: const Icon(Icons.redo),
+              onPressed: _canRedo() ? _redo : null,
+              tooltip: 'Redo',
+            ),
+            IconButton(
+              icon: const Icon(Icons.clear),
+              onPressed: _canUndo() ? _clear : null,
+              tooltip: 'Clear All',
+            ),
+            const VerticalDivider(),
             IconButton(
               icon: Icon(
                 Icons.edit,
@@ -1025,14 +1183,55 @@ class _ImageWithPathsPainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       if (path.points.isNotEmpty) {
-        final drawPath = Path();
-        drawPath.moveTo(path.points[0].dx, path.points[0].dy);
-        for (int i = 1; i < path.points.length; i++) {
-          drawPath.lineTo(path.points[i].dx, path.points[i].dy);
-        }
+        final drawPath = _createSmoothPath(path.points);
         canvas.drawPath(drawPath, paint);
       }
     }
+  }
+
+  /// Creates a smooth path using quadratic Bezier curves
+  Path _createSmoothPath(List<Offset> points) {
+    final path = Path();
+    
+    if (points.isEmpty) return path;
+    
+    if (points.length == 1) {
+      // Single point - draw a small circle
+      path.addOval(Rect.fromCircle(center: points[0], radius: 1.0));
+      return path;
+    }
+    
+    if (points.length == 2) {
+      // Two points - draw a straight line
+      path.moveTo(points[0].dx, points[0].dy);
+      path.lineTo(points[1].dx, points[1].dy);
+      return path;
+    }
+    
+    // Three or more points - use quadratic Bezier curves for smoothness
+    path.moveTo(points[0].dx, points[0].dy);
+    
+    for (int i = 1; i < points.length - 1; i++) {
+      final current = points[i];
+      final next = points[i + 1];
+      
+      // Calculate control point for smooth curve
+      final controlPoint = Offset(
+        (current.dx + next.dx) / 2,
+        (current.dy + next.dy) / 2,
+      );
+      
+      path.quadraticBezierTo(
+        current.dx, current.dy,
+        controlPoint.dx, controlPoint.dy,
+      );
+    }
+    
+    // Draw to the last point
+    final lastPoint = points.last;
+    path.lineTo(lastPoint.dx, lastPoint.dy);
+    
+    return path;
   }
 
   @override
@@ -1071,14 +1270,55 @@ class _DrawingPainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       if (path.points.isNotEmpty) {
-        final drawPath = Path();
-        drawPath.moveTo(path.points[0].dx, path.points[0].dy);
-        for (int i = 1; i < path.points.length; i++) {
-          drawPath.lineTo(path.points[i].dx, path.points[i].dy);
-        }
+        final drawPath = _createSmoothPath(path.points);
         canvas.drawPath(drawPath, paint);
       }
     }
+  }
+
+  /// Creates a smooth path using quadratic Bezier curves
+  Path _createSmoothPath(List<Offset> points) {
+    final path = Path();
+    
+    if (points.isEmpty) return path;
+    
+    if (points.length == 1) {
+      // Single point - draw a small circle
+      path.addOval(Rect.fromCircle(center: points[0], radius: 1.0));
+      return path;
+    }
+    
+    if (points.length == 2) {
+      // Two points - draw a straight line
+      path.moveTo(points[0].dx, points[0].dy);
+      path.lineTo(points[1].dx, points[1].dy);
+      return path;
+    }
+    
+    // Three or more points - use quadratic Bezier curves for smoothness
+    path.moveTo(points[0].dx, points[0].dy);
+    
+    for (int i = 1; i < points.length - 1; i++) {
+      final current = points[i];
+      final next = points[i + 1];
+      
+      // Calculate control point for smooth curve
+      final controlPoint = Offset(
+        (current.dx + next.dx) / 2,
+        (current.dy + next.dy) / 2,
+      );
+      
+      path.quadraticBezierTo(
+        current.dx, current.dy,
+        controlPoint.dx, controlPoint.dy,
+      );
+    }
+    
+    // Draw to the last point
+    final lastPoint = points.last;
+    path.lineTo(lastPoint.dx, lastPoint.dy);
+    
+    return path;
   }
 
   @override
@@ -1097,12 +1337,28 @@ class DrawingPath {
   final List<Offset> points;
   final Color color;
   final double strokeWidth;
+  final DrawingMode mode;
 
   DrawingPath({
     required this.points,
     required this.color,
     required this.strokeWidth,
+    required this.mode,
   });
+
+  DrawingPath copyWith({
+    List<Offset>? points,
+    Color? color,
+    double? strokeWidth,
+    DrawingMode? mode,
+  }) {
+    return DrawingPath(
+      points: points ?? this.points,
+      color: color ?? this.color,
+      strokeWidth: strokeWidth ?? this.strokeWidth,
+      mode: mode ?? this.mode,
+    );
+  }
 
   Map<String, dynamic> toJson() {
     return {
@@ -1135,6 +1391,7 @@ class DrawingPath {
       points: points,
       color: color,
       strokeWidth: (json['stroke_width'] as num).toDouble(),
+      mode: DrawingMode.draw, // Default to draw mode for loaded paths
     );
   }
 }
