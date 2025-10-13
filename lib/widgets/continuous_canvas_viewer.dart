@@ -26,6 +26,21 @@ class ContinuousCanvasViewer extends StatefulWidget {
   State<ContinuousCanvasViewer> createState() => _ContinuousCanvasViewerState();
 }
 
+class EditFrame {
+  final List<String> addedPathIds;
+  final List<DrawingPath> removedPaths;
+  final EditFrameType type;
+  final int page;
+  const EditFrame({
+    required this.type, 
+    required this.addedPathIds, 
+    required this.removedPaths, 
+    required this.page
+  });
+}
+
+enum EditFrameType { draw, erase }
+
 class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
   final TransformationController _transformationController =
       TransformationController();
@@ -39,16 +54,20 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
   Color _selectedColor = Colors.red;
   double _strokeWidth = 5.0;
   DrawingMode _drawMode = DrawingMode.draw;
-  
+
   // Drawing data storage
-  final Map<int, List<DrawingPath>> _pageDrawings = {}; // Map of page index to list of paths
-  final Map<int, List<DrawingPath>> _undonePaths = {}; // Map of page index to undone paths
+  final Map<int, List<DrawingPath>> _pageDrawings =
+      {}; // Map of page index to list of paths
+  final List<EditFrame> _undoStack = [];
+  final List<EditFrame> _redoStack = [];
+
   DrawingPath? _currentPath; // Currently drawing path
   int? _currentDrawingPage; // Which page we're currently drawing on
-  
+  final List<DrawingPath> _currentErasedPaths = []; // Paths erased in current stroke
+
   // Track number of pointers for two-finger gestures
   int _pointerCount = 0;
-  
+
   // Track potential drawing start to prevent unwanted dots during zoom/pan
   Timer? _drawingStartTimer;
   bool _isPotentialMultiTouch = false;
@@ -68,25 +87,25 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
       _centerOnPage(0);
     });
   }
-  
+
   Future<void> _loadAllDrawings() async {
     if (widget.documentId == null) return;
-    
+
     for (int i = 0; i < widget.pages.length; i++) {
       await _loadDrawingsForPage(i);
     }
   }
-  
+
   Future<void> _loadDrawingsForPage(int pageIndex) async {
     if (widget.documentId == null) return;
-    
+
     try {
       final authService = AuthService();
       final result = await authService.getDrawingList(
         widget.documentId!,
         pageIndex,
       );
-      
+
       if (result.success && result.drawingList != null && mounted) {
         final paths = result.drawingList!
             .map((json) => DrawingPath.fromJson(json as Map<String, dynamic>))
@@ -99,7 +118,8 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
           _pageDrawings[pageIndex] = paths;
         });
       } else {
-        debugPrint('No drawings found for page $pageIndex (success: ${result.success})');
+        debugPrint(
+            'No drawings found for page $pageIndex (success: ${result.success})');
       }
     } catch (e) {
       debugPrint('Error loading drawings for page $pageIndex: $e');
@@ -203,18 +223,18 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
       });
     }
   }
-  
+
   // Detect which page a point is on, returns null if not on any page
   int? _getPageAtPosition(Offset position) {
     // Account for transformation
     final matrix = _transformationController.value;
     final inverse = Matrix4.inverted(matrix);
     final transformedPoint = MatrixUtils.transformPoint(inverse, position);
-    
+
     double currentY = _pageSpacing;
     for (int i = 0; i < widget.pages.length; i++) {
       final pageHeight = _getPageHeight(i);
-      
+
       // Check if point is within this page's bounds
       if (transformedPoint.dx >= _pageSpacing &&
           transformedPoint.dx <= _pageSpacing + _pageWidth &&
@@ -222,85 +242,92 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
           transformedPoint.dy <= currentY + pageHeight) {
         return i;
       }
-      
+
       currentY += pageHeight + _pageSpacing;
     }
-    
+
     return null; // Not on any page
   }
-  
+
   // Convert screen coordinates to page-local coordinates
   Offset _screenToPageCoordinates(Offset screenPoint, int pageIndex) {
     final matrix = _transformationController.value;
     final inverse = Matrix4.inverted(matrix);
     final transformedPoint = MatrixUtils.transformPoint(inverse, screenPoint);
-    
+
     // Calculate page top-left position
     double pageY = _pageSpacing;
     for (int i = 0; i < pageIndex; i++) {
       pageY += _getPageHeight(i) + _pageSpacing;
     }
-    
+
     // Convert to page-local coordinates
     return Offset(
       transformedPoint.dx - _pageSpacing,
       transformedPoint.dy - pageY,
     );
   }
-  
+
   void _handleDrawingStart(Offset screenPosition) {
     // Only draw with exactly one finger
     if (!_isDrawingMode || _pointerCount != 1) return;
-    
+
     final pageIndex = _getPageAtPosition(screenPosition);
     if (pageIndex == null) {
       return; // Not on a page
     }
-    
+
     final localPoint = _screenToPageCoordinates(screenPosition, pageIndex);
     final newPath = DrawingPath(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
       points: [localPoint],
       color: _selectedColor,
       strokeWidth: _strokeWidth,
       mode: _drawMode,
     );
-    
+
     setState(() {
       _currentDrawingPage = pageIndex;
       _currentPath = newPath;
+      _currentErasedPaths.clear(); // Clear any previously erased paths
       if (_drawMode == DrawingMode.erase) {
-        _erasePaths(pageIndex, newPath);
+        final erasedPaths = _erasePaths(pageIndex, newPath);
+        _currentErasedPaths.addAll(erasedPaths);
       }
     });
   }
-  
+
   void _handleDrawingUpdate(Offset screenPosition) {
     // Stop drawing if a second finger touches
-    if (!_isDrawingMode || _currentPath == null || _currentDrawingPage == null || _pointerCount != 1) {
+    if (!_isDrawingMode ||
+        _currentPath == null ||
+        _currentDrawingPage == null ||
+        _pointerCount != 1) {
       // If we were drawing and a second finger touched, end the current path
       if (_currentPath != null && _pointerCount > 1) {
         _handleDrawingEnd();
       }
       return;
     }
-    
+
     final pageIndex = _getPageAtPosition(screenPosition);
     final currentPage = _currentDrawingPage!;
     if (pageIndex != currentPage) return; // Moved off the page
-    
+
     final localPoint = _screenToPageCoordinates(screenPosition, currentPage);
-    
+
     setState(() {
       // Add adaptive point sampling to reduce segmentation
       final currentPoints = _currentPath!.points;
       if (currentPoints.isNotEmpty) {
         final lastPoint = currentPoints.last;
         final distance = (localPoint - lastPoint).distance;
-        
+
         // Only add point if it's far enough from the last point
         // This reduces segmentation during fast strokes
         if (distance > 2.0) {
           final updatedPath = DrawingPath(
+            id: _currentPath!.id,
             points: [...currentPoints, localPoint],
             color: _currentPath!.color,
             strokeWidth: _currentPath!.strokeWidth,
@@ -308,12 +335,14 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
           );
           _currentPath = updatedPath;
           if (_drawMode == DrawingMode.erase) {
-            _erasePaths(currentPage, updatedPath);
+            final erasedPaths = _erasePaths(currentPage, updatedPath);
+            _currentErasedPaths.addAll(erasedPaths);
           }
         }
       } else {
         // First point - always add it
         final updatedPath = DrawingPath(
+          id: _currentPath!.id,
           points: [localPoint],
           color: _currentPath!.color,
           strokeWidth: _currentPath!.strokeWidth,
@@ -321,103 +350,152 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         );
         _currentPath = updatedPath;
         if (_drawMode == DrawingMode.erase) {
-          _erasePaths(currentPage, updatedPath);
+          final erasedPaths = _erasePaths(currentPage, updatedPath);
+          _currentErasedPaths.addAll(erasedPaths);
         }
       }
     });
   }
-  
+
   void _handleDrawingEnd() {
-    if (!_isDrawingMode || _currentPath == null || _currentDrawingPage == null) return;
-    
+    if (!_isDrawingMode || _currentPath == null || _currentDrawingPage == null)
+      return;
+
     setState(() {
+      final pageIndex = _currentDrawingPage!;
+      final List<String> addedPathIds = [];
+      final List<DrawingPath> removedPaths = [];
+      
       // Add the completed path to the page's drawing list
       if (_drawMode == DrawingMode.draw) {
         if (!_pageDrawings.containsKey(_currentDrawingPage)) {
           _pageDrawings[_currentDrawingPage!] = [];
         }
         _pageDrawings[_currentDrawingPage!]!.add(_currentPath!);
-        debugPrint('Added path with ${_currentPath!.points.length} points to page $_currentDrawingPage. Total paths: ${_pageDrawings[_currentDrawingPage!]!.length}');
+        addedPathIds.add(_currentPath!.id);
+        debugPrint(
+            'Added path with ${_currentPath!.points.length} points to page $_currentDrawingPage. Total paths: ${_pageDrawings[_currentDrawingPage!]!.length}');
       } else if (_drawMode == DrawingMode.erase) {
-        // Erase mode: remove paths that intersect with the eraser
-        _erasePaths(_currentDrawingPage!, _currentPath!);
+        // Erase mode: use the accumulated erased paths from the stroke
+        removedPaths.addAll(_currentErasedPaths);
+        debugPrint('Erased ${_currentErasedPaths.length} paths from page $pageIndex. Erased path IDs: ${_currentErasedPaths.map((p) => p.id).toList()}');
       }
-      
+
+      // Record the edit frame for undo
+      final editFrame = EditFrame(
+        type: _drawMode == DrawingMode.draw ? EditFrameType.draw : EditFrameType.erase,
+        addedPathIds: addedPathIds,
+        removedPaths: removedPaths,
+        page: pageIndex,
+      );
+      _undoStack.add(editFrame);
+      debugPrint('Created edit frame: type=${editFrame.type}, added=${editFrame.addedPathIds.length}, removed=${editFrame.removedPaths.length}, page=$pageIndex');
+
       // Clear undone paths for this page when a new action is performed
-      _undonePaths[_currentDrawingPage!]?.clear();
-      
+      _redoStack.clear();
+
       _currentPath = null;
       _currentDrawingPage = null;
+      _currentErasedPaths.clear();
     });
   }
-  
-  void _erasePaths(int pageIndex, DrawingPath eraserPath) {
-    if (!_pageDrawings.containsKey(pageIndex)) return;
-    
+
+  List<DrawingPath> _erasePaths(int pageIndex, DrawingPath eraserPath) {
+    if (!_pageDrawings.containsKey(pageIndex)) return [];
+
     final paths = _pageDrawings[pageIndex]!;
     final eraserPoints = eraserPath.points;
-    
-    // Remove paths that intersect with the eraser
-    paths.removeWhere((path) {
+    final erasedPaths = <DrawingPath>[];
+
+    // First, identify which paths should be erased
+    for (final path in paths) {
       if (path.points.isEmpty || eraserPoints.isEmpty) {
-        return false;
+        continue;
       }
 
       final tolerance = math.max(path.strokeWidth, eraserPath.strokeWidth);
+      bool shouldErase = false;
 
       // Quick point proximity check (covers dots and very short segments)
       for (final pathPoint in path.points) {
         for (final eraserPoint in eraserPoints) {
           if ((pathPoint - eraserPoint).distance <= tolerance) {
-            return true;
+            shouldErase = true;
+            break;
           }
         }
+        if (shouldErase) break;
       }
 
-      // Handle single-point eraser paths against drawn segments
-      if (eraserPoints.length == 1 && path.points.length > 1) {
-        final eraserPoint = eraserPoints.first;
-        for (int i = 0; i < path.points.length - 1; i++) {
-          final segmentStart = path.points[i];
-          final segmentEnd = path.points[i + 1];
-          if (_distancePointToSegment(eraserPoint, segmentStart, segmentEnd) <= tolerance) {
-            return true;
-          }
-        }
-      }
-
-      // Handle single-point drawing paths against eraser segments
-      if (path.points.length == 1 && eraserPoints.length > 1) {
-        final pathPoint = path.points.first;
-        for (int i = 0; i < eraserPoints.length - 1; i++) {
-          final eraserStart = eraserPoints[i];
-          final eraserEnd = eraserPoints[i + 1];
-          if (_distancePointToSegment(pathPoint, eraserStart, eraserEnd) <= tolerance) {
-            return true;
-          }
-        }
-      }
-
-      // Check for segment proximity/intersection between the drawing and eraser paths
-      if (path.points.length > 1 && eraserPoints.length > 1) {
-        for (int i = 0; i < path.points.length - 1; i++) {
-          final pathStart = path.points[i];
-          final pathEnd = path.points[i + 1];
-          for (int j = 0; j < eraserPoints.length - 1; j++) {
-            final eraserStart = eraserPoints[j];
-            final eraserEnd = eraserPoints[j + 1];
-            if (_distanceBetweenSegments(pathStart, pathEnd, eraserStart, eraserEnd) <= tolerance) {
-              return true;
+      if (!shouldErase) {
+        // Handle single-point eraser paths against drawn segments
+        if (eraserPoints.length == 1 && path.points.length > 1) {
+          final eraserPoint = eraserPoints.first;
+          for (int i = 0; i < path.points.length - 1; i++) {
+            final segmentStart = path.points[i];
+            final segmentEnd = path.points[i + 1];
+            if (_distancePointToSegment(eraserPoint, segmentStart, segmentEnd) <=
+                tolerance) {
+              shouldErase = true;
+              break;
             }
           }
         }
       }
 
-      return false;
-    });
+      if (!shouldErase) {
+        // Handle single-point drawing paths against eraser segments
+        if (path.points.length == 1 && eraserPoints.length > 1) {
+          final pathPoint = path.points.first;
+          for (int i = 0; i < eraserPoints.length - 1; i++) {
+            final eraserStart = eraserPoints[i];
+            final eraserEnd = eraserPoints[i + 1];
+            if (_distancePointToSegment(pathPoint, eraserStart, eraserEnd) <=
+                tolerance) {
+              shouldErase = true;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!shouldErase) {
+        // Check for segment proximity/intersection between the drawing and eraser paths
+        if (path.points.length > 1 && eraserPoints.length > 1) {
+          for (int i = 0; i < path.points.length - 1; i++) {
+            final pathStart = path.points[i];
+            final pathEnd = path.points[i + 1];
+            for (int j = 0; j < eraserPoints.length - 1; j++) {
+              final eraserStart = eraserPoints[j];
+              final eraserEnd = eraserPoints[j + 1];
+              if (_distanceBetweenSegments(
+                      pathStart, pathEnd, eraserStart, eraserEnd) <=
+                  tolerance) {
+                shouldErase = true;
+                break;
+              }
+            }
+            if (shouldErase) break;
+          }
+        }
+      }
+
+      if (shouldErase) {
+        erasedPaths.add(path);
+      }
+    }
+
+    // Now remove the identified paths
+    final initialCount = paths.length;
+    paths.removeWhere((path) => erasedPaths.contains(path));
+    final finalCount = paths.length;
+
+    debugPrint('_erasePaths: identified ${erasedPaths.length} paths to erase, removed ${initialCount - finalCount} paths from page $pageIndex');
+    return erasedPaths;
   }
 
-  double _distancePointToSegment(Offset point, Offset segmentStart, Offset segmentEnd) {
+  double _distancePointToSegment(
+      Offset point, Offset segmentStart, Offset segmentEnd) {
     final segment = segmentEnd - segmentStart;
     final lengthSquared = segment.dx * segment.dx + segment.dy * segment.dy;
 
@@ -488,46 +566,80 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         b.dy <= math.max(a.dy, c.dy) + 1e-6 &&
         b.dy >= math.min(a.dy, c.dy) - 1e-6;
   }
-  
+
   void _undo() {
-    // Find the most recently modified page with paths to undo
-    int? pageToUndo;
-    for (int i = widget.pages.length - 1; i >= 0; i--) {
-      if (_pageDrawings.containsKey(i) && _pageDrawings[i]!.isNotEmpty) {
-        pageToUndo = i;
-        break;
-      }
-    }
-    
-    if (pageToUndo == null) return;
-    
+    if (_undoStack.isEmpty) return;
+
     setState(() {
-      final removedPath = _pageDrawings[pageToUndo!]!.removeLast();
-      if (!_undonePaths.containsKey(pageToUndo)) {
-        _undonePaths[pageToUndo] = [];
+      // Pop the last edit frame from undo stack
+      final editFrame = _undoStack.removeLast();
+      final pageIndex = editFrame.page;
+      
+      if (!_pageDrawings.containsKey(pageIndex)) {
+        _pageDrawings[pageIndex] = [];
       }
-      _undonePaths[pageToUndo]!.add(removedPath);
+      
+      // Undo the changes by reversing the edit
+      final List<DrawingPath> removedPathsForRedo = [];
+      
+      if (editFrame.type == EditFrameType.draw) {
+        // Remove the paths that were added and collect them for redo
+        removedPathsForRedo.addAll(_pageDrawings[pageIndex]!.where((path) => editFrame.addedPathIds.contains(path.id)));
+        _pageDrawings[pageIndex]!.removeWhere((path) => editFrame.addedPathIds.contains(path.id));
+        debugPrint('Undoing draw: removed ${removedPathsForRedo.length} paths with IDs: ${editFrame.addedPathIds}');
+      } else if (editFrame.type == EditFrameType.erase) {
+        // Restore the paths that were removed
+        debugPrint('Undoing erase: restoring ${editFrame.removedPaths.length} paths with IDs: ${editFrame.removedPaths.map((p) => p.id).toList()}');
+        _pageDrawings[pageIndex]!.addAll(editFrame.removedPaths);
+        debugPrint('After undo: page $pageIndex now has ${_pageDrawings[pageIndex]!.length} paths');
+      }
+      
+      // Create redo frame with the reverse operation
+      final redoFrame = EditFrame(
+        type: editFrame.type,
+        addedPathIds: editFrame.type == EditFrameType.draw ? editFrame.addedPathIds : [],
+        removedPaths: editFrame.type == EditFrameType.draw ? removedPathsForRedo : editFrame.removedPaths,
+        page: pageIndex,
+      );
+      _redoStack.add(redoFrame);
+      
+      debugPrint('Undo applied to page $pageIndex. Undo stack size: ${_undoStack.length}, Redo stack size: ${_redoStack.length}');
     });
   }
 
   void _redo() {
-    // Find the most recently modified page with undone paths to redo
-    int? pageToRedo;
-    for (int i = widget.pages.length - 1; i >= 0; i--) {
-      if (_undonePaths.containsKey(i) && _undonePaths[i]!.isNotEmpty) {
-        pageToRedo = i;
-        break;
-      }
-    }
-    
-    if (pageToRedo == null) return;
-    
+    if (_redoStack.isEmpty) return;
+
     setState(() {
-      final restoredPath = _undonePaths[pageToRedo!]!.removeLast();
-      if (!_pageDrawings.containsKey(pageToRedo)) {
-        _pageDrawings[pageToRedo] = [];
+      // Pop the last edit frame from redo stack
+      final editFrame = _redoStack.removeLast();
+      final pageIndex = editFrame.page;
+      
+      if (!_pageDrawings.containsKey(pageIndex)) {
+        _pageDrawings[pageIndex] = [];
       }
-      _pageDrawings[pageToRedo]!.add(restoredPath);
+      
+      // Apply the redo by reversing the undo
+      if (editFrame.type == EditFrameType.draw) {
+        // Re-add the paths that were removed during undo
+        debugPrint('Redoing draw: re-adding ${editFrame.removedPaths.length} paths');
+        _pageDrawings[pageIndex]!.addAll(editFrame.removedPaths);
+      } else if (editFrame.type == EditFrameType.erase) {
+        // Re-remove the paths that were restored during undo
+        debugPrint('Redoing erase: re-removing ${editFrame.removedPaths.length} paths with IDs: ${editFrame.removedPaths.map((p) => p.id).toList()}');
+        _pageDrawings[pageIndex]!.removeWhere((path) => editFrame.removedPaths.any((removedPath) => removedPath.id == path.id));
+      }
+      
+      // Create undo frame with the reverse operation
+      final undoFrame = EditFrame(
+        type: editFrame.type,
+        addedPathIds: editFrame.type == EditFrameType.draw ? editFrame.addedPathIds : [],
+        removedPaths: editFrame.type == EditFrameType.draw ? editFrame.removedPaths : editFrame.removedPaths,
+        page: pageIndex,
+      );
+      _undoStack.add(undoFrame);
+      
+      debugPrint('Redo applied to page $pageIndex. Undo stack size: ${_undoStack.length}, Redo stack size: ${_redoStack.length}');
     });
   }
 
@@ -539,41 +651,34 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         break;
       }
     }
-    
+
     if (!hasAnyPaths) return;
-    
+
     setState(() {
       _pageDrawings.clear();
-      _undonePaths.clear();
       _currentPath = null;
       _currentDrawingPage = null;
     });
   }
 
   bool _canUndo() {
-    for (final paths in _pageDrawings.values) {
-      if (paths.isNotEmpty) return true;
-    }
-    return false;
+    return _undoStack.isNotEmpty;
   }
 
   bool _canRedo() {
-    for (final paths in _undonePaths.values) {
-      if (paths.isNotEmpty) return true;
-    }
-    return false;
+    return _redoStack.isNotEmpty;
   }
 
   Future<void> _saveAllModifiedPages() async {
     if (widget.documentId == null) return;
-    
+
     final authService = AuthService();
-    
+
     // Save all pages that have drawings
     for (final entry in _pageDrawings.entries) {
       final pageIndex = entry.key;
       final paths = entry.value;
-      
+
       try {
         final pathsJson = paths.map((p) => p.toJson()).toList();
         await authService.saveDrawingList(
@@ -587,7 +692,6 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
     }
   }
 
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -600,19 +704,22 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                 ? Listener(
                     onPointerDown: (event) {
                       _pointerCount++;
-                      
+
                       // Cancel any pending drawing start timer
                       _drawingStartTimer?.cancel();
-                      
+
                       if (_pointerCount == 1) {
                         // Set a flag to indicate we might be starting a multi-touch gesture
                         _isPotentialMultiTouch = true;
-                        
+
                         // Delay drawing start to see if a second finger touches quickly
-                        _drawingStartTimer = Timer(const Duration(milliseconds: 100), () {
+                        _drawingStartTimer =
+                            Timer(const Duration(milliseconds: 100), () {
                           // Only start drawing if we still have exactly one finger
                           // and no second finger touched during the delay
-                          if (_pointerCount == 1 && _isPotentialMultiTouch && mounted) {
+                          if (_pointerCount == 1 &&
+                              _isPotentialMultiTouch &&
+                              mounted) {
                             _isPotentialMultiTouch = false;
                             _handleDrawingStart(event.localPosition);
                           }
@@ -621,7 +728,7 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                         // Second finger touched - cancel any potential drawing
                         _isPotentialMultiTouch = false;
                         _drawingStartTimer?.cancel();
-                        
+
                         if (_currentPath != null) {
                           // End current drawing if second finger touches
                           _handleDrawingEnd();
@@ -630,17 +737,21 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                     },
                     onPointerMove: (event) {
                       // Only draw with exactly one finger and if we're not in potential multi-touch mode
-                      if (_pointerCount == 1 && !_isPotentialMultiTouch && _currentPath != null) {
+                      if (_pointerCount == 1 &&
+                          !_isPotentialMultiTouch &&
+                          _currentPath != null) {
                         _handleDrawingUpdate(event.localPosition);
                       }
                     },
                     onPointerUp: (event) {
-                      if (_pointerCount == 1 && _currentPath != null && !_isPotentialMultiTouch) {
+                      if (_pointerCount == 1 &&
+                          _currentPath != null &&
+                          !_isPotentialMultiTouch) {
                         _handleDrawingEnd();
                       }
                       _pointerCount--;
                       if (_pointerCount < 0) _pointerCount = 0;
-                      
+
                       // Reset multi-touch flag when all fingers are lifted
                       if (_pointerCount == 0) {
                         _isPotentialMultiTouch = false;
@@ -653,7 +764,7 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                       }
                       _pointerCount--;
                       if (_pointerCount < 0) _pointerCount = 0;
-                      
+
                       // Reset multi-touch flag when all fingers are lifted
                       if (_pointerCount == 0) {
                         _isPotentialMultiTouch = false;
@@ -940,16 +1051,17 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
     // Get drawings for this page (including current drawing if it's this page)
     // Don't show the eraser path while erasing (it should be invisible)
     final drawings = _pageDrawings[index] ?? [];
-    final allDrawings = _currentDrawingPage == index && 
-                       _currentPath != null && 
-                       _drawMode != DrawingMode.erase
+    final allDrawings = _currentDrawingPage == index &&
+            _currentPath != null &&
+            _drawMode != DrawingMode.erase
         ? [...drawings, _currentPath!]
         : drawings;
-    
+
     if (allDrawings.isNotEmpty) {
-      debugPrint('Building page $index content with ${allDrawings.length} drawings');
+      debugPrint(
+          'Building page $index content with ${allDrawings.length} drawings');
     }
-    
+
     if (page.type == 'DigitalPage' && page.controller != null) {
       return _DigitalPagePreview(
         key: ValueKey('digital_$index\_$_refreshKey'),
@@ -1047,7 +1159,8 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
     super.didUpdateWidget(oldWidget);
     // If drawings changed, trigger a rebuild
     if (widget.drawings.length != oldWidget.drawings.length) {
-      debugPrint('_ImagePagePreview: Drawings changed from ${oldWidget.drawings.length} to ${widget.drawings.length}');
+      debugPrint(
+          '_ImagePagePreview: Drawings changed from ${oldWidget.drawings.length} to ${widget.drawings.length}');
       setState(() {
         // Force rebuild with new drawings
       });
@@ -1172,7 +1285,7 @@ class _ImageWithPathsPainter extends CustomPainter {
       image.height.toDouble(),
     );
     canvas.drawImageRect(image, srcRect, dstRect, Paint());
-    
+
     // Draw paths on top of image
     for (final path in paths) {
       final paint = Paint()
@@ -1192,45 +1305,47 @@ class _ImageWithPathsPainter extends CustomPainter {
   /// Creates a smooth path using quadratic Bezier curves
   Path _createSmoothPath(List<Offset> points) {
     final path = Path();
-    
+
     if (points.isEmpty) return path;
-    
+
     if (points.length == 1) {
       // Single point - draw a small circle
       path.addOval(Rect.fromCircle(center: points[0], radius: 1.0));
       return path;
     }
-    
+
     if (points.length == 2) {
       // Two points - draw a straight line
       path.moveTo(points[0].dx, points[0].dy);
       path.lineTo(points[1].dx, points[1].dy);
       return path;
     }
-    
+
     // Three or more points - use quadratic Bezier curves for smoothness
     path.moveTo(points[0].dx, points[0].dy);
-    
+
     for (int i = 1; i < points.length - 1; i++) {
       final current = points[i];
       final next = points[i + 1];
-      
+
       // Calculate control point for smooth curve
       final controlPoint = Offset(
         (current.dx + next.dx) / 2,
         (current.dy + next.dy) / 2,
       );
-      
+
       path.quadraticBezierTo(
-        current.dx, current.dy,
-        controlPoint.dx, controlPoint.dy,
+        current.dx,
+        current.dy,
+        controlPoint.dx,
+        controlPoint.dy,
       );
     }
-    
+
     // Draw to the last point
     final lastPoint = points.last;
     path.lineTo(lastPoint.dx, lastPoint.dy);
-    
+
     return path;
   }
 
@@ -1242,7 +1357,7 @@ class _ImageWithPathsPainter extends CustomPainter {
       // Quick check: compare references (if they're different objects, repaint)
       pathsChanged = !identical(oldDelegate.paths, paths);
     }
-    
+
     return oldDelegate.image != image ||
         oldDelegate.containerSize != containerSize ||
         oldDelegate.padding != padding ||
@@ -1259,7 +1374,8 @@ class _DrawingPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     if (paths.isNotEmpty) {
-      debugPrint('_DrawingPainter painting ${paths.length} paths on canvas size: $size');
+      debugPrint(
+          '_DrawingPainter painting ${paths.length} paths on canvas size: $size');
     }
     for (final path in paths) {
       final paint = Paint()
@@ -1279,52 +1395,55 @@ class _DrawingPainter extends CustomPainter {
   /// Creates a smooth path using quadratic Bezier curves
   Path _createSmoothPath(List<Offset> points) {
     final path = Path();
-    
+
     if (points.isEmpty) return path;
-    
+
     if (points.length == 1) {
       // Single point - draw a small circle
       path.addOval(Rect.fromCircle(center: points[0], radius: 1.0));
       return path;
     }
-    
+
     if (points.length == 2) {
       // Two points - draw a straight line
       path.moveTo(points[0].dx, points[0].dy);
       path.lineTo(points[1].dx, points[1].dy);
       return path;
     }
-    
+
     // Three or more points - use quadratic Bezier curves for smoothness
     path.moveTo(points[0].dx, points[0].dy);
-    
+
     for (int i = 1; i < points.length - 1; i++) {
       final current = points[i];
       final next = points[i + 1];
-      
+
       // Calculate control point for smooth curve
       final controlPoint = Offset(
         (current.dx + next.dx) / 2,
         (current.dy + next.dy) / 2,
       );
-      
+
       path.quadraticBezierTo(
-        current.dx, current.dy,
-        controlPoint.dx, controlPoint.dy,
+        current.dx,
+        current.dy,
+        controlPoint.dx,
+        controlPoint.dy,
       );
     }
-    
+
     // Draw to the last point
     final lastPoint = points.last;
     path.lineTo(lastPoint.dx, lastPoint.dy);
-    
+
     return path;
   }
 
   @override
   bool shouldRepaint(_DrawingPainter oldDelegate) {
     // Repaint if path count changed or if it's a different list instance
-    return oldDelegate.paths.length != paths.length || !identical(oldDelegate.paths, paths);
+    return oldDelegate.paths.length != paths.length ||
+        !identical(oldDelegate.paths, paths);
   }
 }
 
@@ -1334,12 +1453,14 @@ enum DrawingMode {
 }
 
 class DrawingPath {
+  final String id;
   final List<Offset> points;
   final Color color;
   final double strokeWidth;
   final DrawingMode mode;
 
   DrawingPath({
+    required this.id,
     required this.points,
     required this.color,
     required this.strokeWidth,
@@ -1347,12 +1468,14 @@ class DrawingPath {
   });
 
   DrawingPath copyWith({
+    String? id,
     List<Offset>? points,
     Color? color,
     double? strokeWidth,
     DrawingMode? mode,
   }) {
     return DrawingPath(
+      id: id ?? this.id,
       points: points ?? this.points,
       color: color ?? this.color,
       strokeWidth: strokeWidth ?? this.strokeWidth,
@@ -1362,6 +1485,7 @@ class DrawingPath {
 
   Map<String, dynamic> toJson() {
     return {
+      'id': id,
       'points': points.map((p) => [p.dx, p.dy]).toList(),
       'color': {
         'red': ((color.r * 255.0).round() & 0xff),
@@ -1388,6 +1512,7 @@ class DrawingPath {
     );
 
     return DrawingPath(
+      id: json['id'] as String? ?? DateTime.now().millisecondsSinceEpoch.toString(),
       points: points,
       color: color,
       strokeWidth: (json['stroke_width'] as num).toDouble(),

@@ -1918,12 +1918,13 @@ class _DocumentPageState extends State<DocumentPage> {
   // List of pages (each can be DigitalPage or ImagePage)
   List<DocumentPageData> _pages = [];
   int _currentPageIndex = 0;
-  late ValueNotifier<int> _pageIndexNotifier; // For instant UI updates without setState
+  late ValueNotifier<int>
+      _pageIndexNotifier; // For instant UI updates without setState
 
   // Auto-save timer
   Timer? _autoSaveTimer;
   DateTime? _lastSaveTime;
-  
+
   // Track when to refresh image paths (increment to force reload)
   int _imageRefreshCounter = 0;
 
@@ -1962,11 +1963,9 @@ class _DocumentPageState extends State<DocumentPage> {
       final authService = AuthService();
       final result = await authService.getDocument(widget.documentId);
 
-
       if (result.success && result.document != null) {
         // Parse pages and load them
         final pages = result.document!['pages'] as List<dynamic>?;
-
 
         List<DocumentPageData> loadedPages = [];
         List<String> imageAttachmentIds = [];
@@ -1999,12 +1998,10 @@ class _DocumentPageState extends State<DocumentPage> {
             final pageType = page['page_type'];
 
             if (pageType != null) {
-
               if (pageType['type'] == 'DigitalPage') {
                 // Load the digital page content
                 final pageId = page['id']?.toString();
                 final quillJson = pageType['quill_json'];
-
 
                 if (quillJson != null && quillJson.isNotEmpty) {
                   try {
@@ -2015,8 +2012,8 @@ class _DocumentPageState extends State<DocumentPage> {
                     final doc = ParchmentDocument.fromDelta(delta);
                     final controller = FleatherController(document: doc);
 
-                    loadedPages
-                        .add(DocumentPageData.digital(id: pageId, controller: controller));
+                    loadedPages.add(DocumentPageData.digital(
+                        id: pageId, controller: controller));
                   } catch (e) {
                     // Add empty page if parsing fails
                     loadedPages.add(DocumentPageData.digital(id: pageId));
@@ -2031,7 +2028,7 @@ class _DocumentPageState extends State<DocumentPage> {
                 final imageUrl = pageType['image_url'] as String?;
 
                 final imageCacheService = ImageCacheService();
-                final cachedImage = imageUrl != null 
+                final cachedImage = imageUrl != null
                     ? imageCacheService.getCachedImage(imageUrl)
                     : null;
 
@@ -2083,7 +2080,6 @@ class _DocumentPageState extends State<DocumentPage> {
 
           // Page index will be updated automatically by the notifier
         }
-
       } else {
         setState(() {
           _isLoading = false;
@@ -2097,7 +2093,6 @@ class _DocumentPageState extends State<DocumentPage> {
       });
     }
   }
-
 
   @override
   void dispose() {
@@ -2345,7 +2340,7 @@ class _DocumentPageState extends State<DocumentPage> {
 
   Future<void> _drawOnImage(int index) async {
     final page = _pages[index];
-    
+
     // Check if we can draw on this page
     // For ImagePage, we need imageBytes to be loaded
     // For DigitalPage, we need a controller
@@ -2373,11 +2368,11 @@ class _DocumentPageState extends State<DocumentPage> {
       // Force refresh the page to reload the drawing paths
       if (mounted) {
         final currentPage = _currentPageIndex;
-        
+
         setState(() {
           _imageRefreshCounter++;
         });
-        
+
         // Restore the page position after rebuild
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if (mounted) {
@@ -2539,38 +2534,6 @@ class _DocumentPageState extends State<DocumentPage> {
       ),
       body: Column(
         children: [
-          // Show toolbar only for digital pages with fade animation
-          // Uses ValueListenableBuilder to avoid rebuilding entire page
-          ValueListenableBuilder<int>(
-            valueListenable: _pageIndexNotifier,
-            builder: (context, pageIndex, child) {
-              final currentPageForToolbar = pageIndex >= 0 && pageIndex < _pages.length 
-                  ? _pages[pageIndex] 
-                  : null;
-              
-              return AnimatedSize(
-                duration: const Duration(milliseconds: 200),
-                curve: Curves.easeInOut,
-                child: AnimatedOpacity(
-                  opacity: currentPageForToolbar?.type == 'DigitalPage' &&
-                          currentPageForToolbar?.controller != null
-                      ? 1.0
-                      : 0.0,
-                  duration: const Duration(milliseconds: 200),
-                  child: currentPageForToolbar?.type == 'DigitalPage' &&
-                          currentPageForToolbar?.controller != null
-                      ? ResponsiveFleatherToolbar(controller: currentPageForToolbar!.controller!)
-                      : SizedBox(
-                          height: currentPageForToolbar?.type == 'DigitalPage' &&
-                                  currentPageForToolbar?.controller != null
-                              ? 88
-                              : 0,
-                        ),
-                ),
-              );
-            },
-          ),
-
           // Continuous canvas view - zoom and pan around all pages
           Expanded(
             child: ContinuousCanvasViewer(
@@ -3222,8 +3185,7 @@ class _ImagesPageState extends State<ImagesPage> {
                   Uint8List.fromList(result.fileBytes!);
             });
           }
-        } catch (e) {
-        }
+        } catch (e) {}
       }
     }
   }
@@ -3381,3 +3343,4 @@ class PhoneNumberFormatter extends TextInputFormatter {
     );
   }
 }
+

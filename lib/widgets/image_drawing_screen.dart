@@ -31,7 +31,6 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
   // Drawing state
   final List<DrawingPath> _paths = [];
-  final List<DrawingPath> _undonePaths = [];
   DrawingPath? _currentPath;
 
   @override
@@ -103,46 +102,31 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
             _paths
               ..clear()
               ..addAll(loadedPaths);
-            _undonePaths.clear();
-            debugPrint('Loaded ${_paths.length} drawing paths');
           });
         }
       }
     } catch (e) {
-      debugPrint('Error loading paths: $e');
+      // Error loading paths
     }
   }
 
   void _undo() {
+    debugPrint('UNDO: Undo button pressed');
+    debugPrint('UNDO: Current paths count: ${_paths.length}');
+  }
+
+  void _redo() {
+    debugPrint('REDO: Redo button pressed');
+    debugPrint('REDO: Current paths count: ${_paths.length}');
+  }
+
+  void _clear() {
     if (_paths.isEmpty) {
       return;
     }
 
     setState(() {
-      final removedPath = _paths.removeLast();
-      _undonePaths.add(removedPath);
-    });
-  }
-
-  void _redo() {
-    if (_undonePaths.isEmpty) {
-      return;
-    }
-
-    setState(() {
-      final restoredPath = _undonePaths.removeLast();
-      _paths.add(restoredPath);
-    });
-  }
-
-  void _clear() {
-    if (_paths.isEmpty && _undonePaths.isEmpty) {
-      return;
-    }
-
-    setState(() {
       _paths.clear();
-      _undonePaths.clear();
       _currentPath = null;
     });
   }
@@ -300,7 +284,6 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
       return success;
     } catch (e) {
-      debugPrint('Error saving paths: $e');
       return false;
     }
   }
@@ -362,12 +345,12 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.undo),
-                    onPressed: _paths.isNotEmpty ? _undo : null,
+                    onPressed: _undo,
                     tooltip: 'Undo',
                   ),
                   IconButton(
                     icon: const Icon(Icons.redo),
-                    onPressed: _undonePaths.isNotEmpty ? _redo : null,
+                    onPressed: _redo,
                     tooltip: 'Redo',
                   ),
                   IconButton(
@@ -497,7 +480,6 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                   } else {
                     _paths.add(_currentPath!);
                   }
-                  _undonePaths.clear();
                   _currentPath = null;
                 });
               },
