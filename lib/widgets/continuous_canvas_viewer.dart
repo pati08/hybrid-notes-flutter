@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:fleather/fleather.dart';
 import '../models/document_page_data.dart';
 import '../auth_service.dart';
+import '../services/document_preview_service.dart';
 import 'page_edit_screen.dart';
 
 /// A continuous canvas viewer that displays all pages in a scrollable, zoomable canvas
@@ -84,7 +85,9 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
 
     // Set initial view to show first page centered and scaled to fit
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _centerOnPage(0);
+      if (mounted) {
+        _centerOnPage(0);
+      }
     });
   }
 
@@ -178,19 +181,24 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
       pageY += _getPageHeight(i) + _pageSpacing;
     }
 
-    // Calculate scale to fit page width
+    // Calculate scale to fit page width with some margin
     final scale = (size.width * 0.9) / _pageWidth;
 
-    // Center the page
-    final offsetX = (size.width - _pageWidth * scale) / 2;
-    final offsetY = (size.height / 2) -
-        (pageY * scale) -
-        (_getPageHeight(pageIndex) * scale / 2);
+    // Calculate the page top-left position in canvas coordinates
+    final pageTopX = _pageSpacing;
+    final pageTopY = pageY;
 
-    // ignore: deprecated_member_use
-    _transformationController.value = Matrix4.identity()
+    // Calculate offsets to position page top near viewport top
+    final offsetX = (size.width / 2) - (pageTopX * scale) - (_pageWidth * scale / 2);
+    final offsetY = 50.0 - (pageTopY * scale); // Small margin from top
+
+    // Apply transformation smoothly
+    final matrix = Matrix4.identity()
       ..translate(offsetX, offsetY)
       ..scale(scale);
+    
+    // Use animateTo for smooth transition
+    _transformationController.value = matrix;
   }
 
   void _handlePageTap(int pageIndex) async {
@@ -686,6 +694,8 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
           pageIndex,
           pathsJson,
         );
+        // Mark document as modified since drawings were saved
+        DocumentPreviewService().markDocumentAsModified(widget.documentId!);
       } catch (e) {
         debugPrint('Error saving drawings for page $pageIndex: $e');
       }
@@ -807,22 +817,36 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
           Positioned(
             bottom: 16,
             right: 16,
-            child: FloatingActionButton(
-              onPressed: () async {
-                if (_isDrawingMode) {
-                  // Save all modified pages before exiting drawing mode
-                  await _saveAllModifiedPages();
-                }
-                setState(() {
-                  _isDrawingMode = !_isDrawingMode;
-                });
-              },
-              backgroundColor: _isDrawingMode
-                  ? const Color(0xffbd6051)
-                  : const Color(0xff102837),
-              child: Icon(
-                _isDrawingMode ? Icons.check : Icons.draw,
-                color: _isDrawingMode ? Colors.white : const Color(0xffc7ffbf),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(28),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.25),
+                    blurRadius: 8,
+                    spreadRadius: 2,
+                    offset: const Offset(0, 4),
+                  ),
+                ],
+              ),
+              child: FloatingActionButton(
+                onPressed: () async {
+                  if (_isDrawingMode) {
+                    // Save all modified pages before exiting drawing mode
+                    await _saveAllModifiedPages();
+                  }
+                  setState(() {
+                    _isDrawingMode = !_isDrawingMode;
+                  });
+                },
+                backgroundColor: _isDrawingMode
+                    ? const Color(0xffbd6051)
+                    : const Color(0xff102837),
+                elevation: 0, // Remove default elevation since we're using custom shadow
+                child: Icon(
+                  _isDrawingMode ? Icons.check : Icons.draw,
+                  color: _isDrawingMode ? Colors.white : const Color(0xffc7ffbf),
+                ),
               ),
             ),
           ),
@@ -838,9 +862,10 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
         color: Colors.grey[200],
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withOpacity(0.2),
-            blurRadius: 4,
-            offset: const Offset(0, 2),
+            color: Colors.black.withOpacity(0.25),
+            blurRadius: 8,
+            spreadRadius: 1,
+            offset: const Offset(0, 4),
           ),
         ],
       ),
@@ -940,6 +965,14 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
               color: isSelected ? Colors.blue : Colors.grey[400]!,
               width: isSelected ? 3 : 2,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 4,
+                spreadRadius: 1,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
         ),
       ),
@@ -1017,6 +1050,14 @@ class _ContinuousCanvasViewerState extends State<ContinuousCanvasViewer> {
                   decoration: BoxDecoration(
                     color: Colors.black.withOpacity(0.6),
                     borderRadius: BorderRadius.circular(12),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 4,
+                        spreadRadius: 1,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
                   ),
                   child: Text(
                     'Page ${index + 1}',
@@ -1127,7 +1168,7 @@ class _DigitalPagePreview extends StatelessWidget {
   }
 }
 
-/// Preview of an image page (non-interactive)
+/// Simple image preview widget - rewritten from scratch
 class _ImagePagePreview extends StatefulWidget {
   final List<int> imageBytes;
   final List<DrawingPath> drawings;
@@ -1157,13 +1198,8 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
   @override
   void didUpdateWidget(_ImagePagePreview oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // If drawings changed, trigger a rebuild
     if (widget.drawings.length != oldWidget.drawings.length) {
-      debugPrint(
-          '_ImagePagePreview: Drawings changed from ${oldWidget.drawings.length} to ${widget.drawings.length}');
-      setState(() {
-        // Force rebuild with new drawings
-      });
+      setState(() {});
     }
   }
 
@@ -1180,10 +1216,13 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
           _isLoading = false;
         });
 
-        // Notify parent of the image aspect ratio
         if (widget.onImageLoaded != null && _image != null) {
           final aspectRatio = _image!.width / _image!.height;
-          widget.onImageLoaded!(aspectRatio);
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if (mounted) {
+              widget.onImageLoaded!(aspectRatio);
+            }
+          });
         }
       }
     } catch (e) {
@@ -1198,29 +1237,22 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
-      return const Center(
-        child: CircularProgressIndicator(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_image == null) {
-      return const Center(
-        child: Text('Failed to load image'),
-      );
+      return const Center(child: Text('Failed to load image'));
     }
 
-    // The parent adds 16px padding, but we need the FULL size for coordinate matching
-    // Use a negative margin to expand back to full size
     return Transform.translate(
       offset: const Offset(-16, -16),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          // Add back the padding we negated to get the full canvas size
-          final fullWidth = constraints.maxWidth + 32; // 16px on each side
+          final fullWidth = constraints.maxWidth + 32;
           final fullHeight = constraints.maxHeight + 32;
 
           return CustomPaint(
-            painter: _ImageWithPathsPainter(
+            painter: _SimpleImagePainter(
               image: _image!,
               containerSize: Size(fullWidth, fullHeight),
               padding: 16.0,
@@ -1234,14 +1266,14 @@ class _ImagePagePreviewState extends State<_ImagePagePreview> {
   }
 }
 
-/// Custom painter for image with drawings
-class _ImageWithPathsPainter extends CustomPainter {
+/// Simple painter for image with drawings - rewritten from scratch
+class _SimpleImagePainter extends CustomPainter {
   final ui.Image image;
   final Size containerSize;
   final double padding;
   final List<DrawingPath> paths;
 
-  _ImageWithPathsPainter({
+  _SimpleImagePainter({
     required this.image,
     required this.containerSize,
     this.padding = 0.0,
@@ -1250,43 +1282,38 @@ class _ImageWithPathsPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // Calculate available space for image (accounting for padding)
+    // Calculate available space for image
     final availableWidth = containerSize.width - (padding * 2);
     final availableHeight = containerSize.height - (padding * 2);
 
     final imageAspect = image.width / image.height;
     final availableAspect = availableWidth / availableHeight;
 
-    // Calculate image display rect with padding
+    // Calculate image display rect
     Rect dstRect;
     if (availableAspect > imageAspect) {
-      // Available space is wider - fit to height
+      // Fit to height
       final scaledWidth = availableHeight * imageAspect;
       final offsetX = padding + (availableWidth - scaledWidth) / 2;
       dstRect = Rect.fromLTWH(offsetX, padding, scaledWidth, availableHeight);
     } else {
-      // Available space is taller - fit to width
+      // Fit to width
       final scaledHeight = availableWidth / imageAspect;
       final offsetY = padding + (availableHeight - scaledHeight) / 2;
       dstRect = Rect.fromLTWH(padding, offsetY, availableWidth, scaledHeight);
     }
 
-    // Draw image with shadow effect
+    // Draw shadow
     final shadowPaint = Paint()
       ..color = Colors.black.withOpacity(0.3)
       ..maskFilter = const MaskFilter.blur(BlurStyle.normal, 10);
     canvas.drawRect(dstRect.shift(const Offset(0, 4)), shadowPaint);
 
-    // Draw image maintaining aspect ratio
-    final srcRect = Rect.fromLTWH(
-      0,
-      0,
-      image.width.toDouble(),
-      image.height.toDouble(),
-    );
+    // Draw image
+    final srcRect = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
     canvas.drawImageRect(image, srcRect, dstRect, Paint());
 
-    // Draw paths on top of image
+    // Draw paths
     for (final path in paths) {
       final paint = Paint()
         ..color = path.color
@@ -1296,72 +1323,36 @@ class _ImageWithPathsPainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       if (path.points.isNotEmpty) {
-        final drawPath = _createSmoothPath(path.points);
+        final drawPath = _createSimplePath(path.points);
         canvas.drawPath(drawPath, paint);
       }
     }
   }
 
-  /// Creates a smooth path using quadratic Bezier curves
-  Path _createSmoothPath(List<Offset> points) {
+  /// Creates a simple path
+  Path _createSimplePath(List<Offset> points) {
     final path = Path();
-
     if (points.isEmpty) return path;
 
     if (points.length == 1) {
-      // Single point - draw a small circle
       path.addOval(Rect.fromCircle(center: points[0], radius: 1.0));
       return path;
     }
 
-    if (points.length == 2) {
-      // Two points - draw a straight line
-      path.moveTo(points[0].dx, points[0].dy);
-      path.lineTo(points[1].dx, points[1].dy);
-      return path;
-    }
-
-    // Three or more points - use quadratic Bezier curves for smoothness
     path.moveTo(points[0].dx, points[0].dy);
-
-    for (int i = 1; i < points.length - 1; i++) {
-      final current = points[i];
-      final next = points[i + 1];
-
-      // Calculate control point for smooth curve
-      final controlPoint = Offset(
-        (current.dx + next.dx) / 2,
-        (current.dy + next.dy) / 2,
-      );
-
-      path.quadraticBezierTo(
-        current.dx,
-        current.dy,
-        controlPoint.dx,
-        controlPoint.dy,
-      );
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
     }
-
-    // Draw to the last point
-    final lastPoint = points.last;
-    path.lineTo(lastPoint.dx, lastPoint.dy);
-
     return path;
   }
 
   @override
-  bool shouldRepaint(_ImageWithPathsPainter oldDelegate) {
-    // Check if paths changed by comparing list contents
-    bool pathsChanged = oldDelegate.paths.length != paths.length;
-    if (!pathsChanged && paths.isNotEmpty) {
-      // Quick check: compare references (if they're different objects, repaint)
-      pathsChanged = !identical(oldDelegate.paths, paths);
-    }
-
+  bool shouldRepaint(_SimpleImagePainter oldDelegate) {
     return oldDelegate.image != image ||
         oldDelegate.containerSize != containerSize ||
         oldDelegate.padding != padding ||
-        pathsChanged;
+        oldDelegate.paths.length != paths.length ||
+        !identical(oldDelegate.paths, paths);
   }
 }
 

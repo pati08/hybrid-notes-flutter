@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:fleather/fleather.dart';
 import '../auth_service.dart';
 import '../models/document_page_data.dart';
+import '../services/document_preview_service.dart';
 
 class ImageDrawingScreen extends StatefulWidget {
   final DocumentPageData page;
@@ -65,15 +66,23 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
   Future<void> _loadBackground() async {
     if (widget.page.type == 'ImagePage' && widget.page.imageBytes != null) {
-      // Load physical page image
-      final codec = await ui.instantiateImageCodec(widget.page.imageBytes!);
-      final frame = await codec.getNextFrame();
-      setState(() {
-        _backgroundImage = frame.image;
-        _isLoading = false;
-      });
+      try {
+        final codec = await ui.instantiateImageCodec(widget.page.imageBytes!);
+        final frame = await codec.getNextFrame();
+        if (mounted) {
+          setState(() {
+            _backgroundImage = frame.image;
+            _isLoading = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+          });
+        }
+      }
     } else if (widget.page.type == 'DigitalPage') {
-      // For digital pages, we don't need to load an image
       setState(() {
         _isLoading = false;
       });
@@ -282,6 +291,11 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
         pathsJson,
       );
 
+      if (success) {
+        // Mark document as modified since drawings were saved
+        DocumentPreviewService().markDocumentAsModified(widget.documentId!);
+      }
+
       return success;
     } catch (e) {
       return false;
@@ -324,7 +338,7 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                           : 'Failed to save drawing (API error - check logs)',
                     ),
                     backgroundColor: Colors.red,
-                    duration: const Duration(seconds: 4),
+                    duration: const Duration(seconds: 2),
                   ),
                 );
               }
@@ -338,7 +352,17 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
           // Toolbar
           Container(
             padding: const EdgeInsets.all(8.0),
-            color: Colors.grey[200],
+            decoration: BoxDecoration(
+              color: Colors.grey[200],
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.25),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                  offset: const Offset(0, 4),
+                ),
+              ],
+            ),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -505,7 +529,6 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
   Widget _buildDrawingCanvas() {
     if (widget.page.type == 'DigitalPage') {
-      // For digital pages, show the text editor as a non-interactive background
       return LayoutBuilder(
         builder: (context, constraints) {
           return SizedBox(
@@ -525,7 +548,7 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                         if (_paths.isNotEmpty || _currentPath != null)
                           Positioned.fill(
                             child: CustomPaint(
-                              painter: _PathPainter(
+                              painter: _SimplePathPainter(
                                 paths: _paths,
                                 inProgressPath: _currentPath,
                               ),
@@ -539,26 +562,22 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
         },
       );
     } else {
-      // For image pages, show image centered with shadow
+      // Simple image display
       return LayoutBuilder(
         builder: (context, constraints) {
           if (_backgroundImage == null) {
             return const SizedBox.shrink();
           }
 
-          // Calculate the size to fit the image while preserving aspect ratio
-          final imageAspect =
-              _backgroundImage!.width / _backgroundImage!.height;
-          final availableWidth = constraints.maxWidth - 16; // Small padding
+          final imageAspect = _backgroundImage!.width / _backgroundImage!.height;
+          final availableWidth = constraints.maxWidth - 16;
           final availableHeight = constraints.maxHeight - 16;
 
           double displayWidth, displayHeight;
           if (availableWidth / availableHeight > imageAspect) {
-            // Height is the limiting factor
             displayHeight = availableHeight;
             displayWidth = displayHeight * imageAspect;
           } else {
-            // Width is the limiting factor
             displayWidth = availableWidth;
             displayHeight = displayWidth / imageAspect;
           }
@@ -570,12 +589,12 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
           );
 
           return CustomPaint(
-            painter: _ImagePainter(
+            painter: _SimpleImagePainter(
               image: _backgroundImage!,
               imageDisplayRect: imageRect,
             ),
             foregroundPainter: (_paths.isNotEmpty || _currentPath != null)
-                ? _PathPainter(
+                ? _SimplePathPainter(
                     paths: _paths,
                     inProgressPath: _currentPath,
                   )
@@ -610,6 +629,14 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
               color: isSelected ? Colors.blue : Colors.grey[400]!,
               width: isSelected ? 3 : 2,
             ),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.15),
+                blurRadius: 4,
+                spreadRadius: 1,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
         ),
       ),
@@ -687,12 +714,12 @@ class DrawingPath {
   }
 }
 
-/// Custom painter for drawing paths
-class _PathPainter extends CustomPainter {
+/// Simple painter for drawing paths - rewritten from scratch
+class _SimplePathPainter extends CustomPainter {
   final List<DrawingPath> paths;
   final DrawingPath? inProgressPath;
 
-  _PathPainter({
+  _SimplePathPainter({
     required this.paths,
     this.inProgressPath,
   });
@@ -709,7 +736,7 @@ class _PathPainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       if (path.points.isNotEmpty) {
-        final drawPath = _createSmoothPath(path.points);
+        final drawPath = _createSimplePath(path.points);
         canvas.drawPath(drawPath, paint);
       }
     }
@@ -724,90 +751,56 @@ class _PathPainter extends CustomPainter {
         ..style = PaintingStyle.stroke;
 
       if (inProgressPath!.points.isNotEmpty) {
-        final drawPath = _createSmoothPath(inProgressPath!.points);
+        final drawPath = _createSimplePath(inProgressPath!.points);
         canvas.drawPath(drawPath, paint);
       }
     }
   }
 
-  /// Creates a smooth path using quadratic Bezier curves
-  Path _createSmoothPath(List<Offset> points) {
+  /// Creates a simple path
+  Path _createSimplePath(List<Offset> points) {
     final path = Path();
-    
     if (points.isEmpty) return path;
-    
+
     if (points.length == 1) {
-      // Single point - draw a small circle
       path.addOval(Rect.fromCircle(center: points[0], radius: 1.0));
       return path;
     }
-    
-    if (points.length == 2) {
-      // Two points - draw a straight line
-      path.moveTo(points[0].dx, points[0].dy);
-      path.lineTo(points[1].dx, points[1].dy);
-      return path;
-    }
-    
-    // Three or more points - use quadratic Bezier curves for smoothness
+
     path.moveTo(points[0].dx, points[0].dy);
-    
-    for (int i = 1; i < points.length - 1; i++) {
-      final current = points[i];
-      final next = points[i + 1];
-      
-      // Calculate control point for smooth curve
-      final controlPoint = Offset(
-        (current.dx + next.dx) / 2,
-        (current.dy + next.dy) / 2,
-      );
-      
-      path.quadraticBezierTo(
-        current.dx, current.dy,
-        controlPoint.dx, controlPoint.dy,
-      );
+    for (int i = 1; i < points.length; i++) {
+      path.lineTo(points[i].dx, points[i].dy);
     }
-    
-    // Draw to the last point
-    final lastPoint = points.last;
-    path.lineTo(lastPoint.dx, lastPoint.dy);
-    
     return path;
   }
 
   @override
-  bool shouldRepaint(_PathPainter oldDelegate) {
+  bool shouldRepaint(_SimplePathPainter oldDelegate) {
     return oldDelegate.paths.length != paths.length ||
         oldDelegate.inProgressPath != inProgressPath ||
         !identical(oldDelegate.paths, paths);
   }
 }
 
-/// Simple painter that only draws the image (no drawing paths)
-class _ImagePainter extends CustomPainter {
+/// Simple painter that only draws the image - rewritten from scratch
+class _SimpleImagePainter extends CustomPainter {
   final ui.Image image;
   final Rect imageDisplayRect;
 
-  _ImagePainter({
+  _SimpleImagePainter({
     required this.image,
     required this.imageDisplayRect,
   });
 
   @override
   void paint(Canvas canvas, Size size) {
-    final srcRect = Rect.fromLTWH(
-      0,
-      0,
-      image.width.toDouble(),
-      image.height.toDouble(),
-    );
+    final srcRect = Rect.fromLTWH(0, 0, image.width.toDouble(), image.height.toDouble());
     canvas.drawImageRect(image, srcRect, imageDisplayRect, Paint());
   }
 
   @override
-  bool shouldRepaint(_ImagePainter oldDelegate) {
-    return oldDelegate.image != image ||
-        oldDelegate.imageDisplayRect != imageDisplayRect;
+  bool shouldRepaint(_SimpleImagePainter oldDelegate) {
+    return oldDelegate.image != image || oldDelegate.imageDisplayRect != imageDisplayRect;
   }
 }
 
@@ -852,7 +845,12 @@ class _TwoFingerInteractiveViewerState
   void _onTransformChanged() {
     // Rebuild when transformation changes
     if (mounted) {
-      setState(() {});
+      // Defer setState to avoid calling during build
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) {
+          setState(() {});
+        }
+      });
     }
   }
 

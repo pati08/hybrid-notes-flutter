@@ -12,8 +12,11 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'auth_service.dart';
 import 'models/document_page_data.dart';
 import 'services/image_cache_service.dart';
+import 'services/document_preview_service.dart';
+import 'services/document_metadata_service.dart';
 import 'widgets/continuous_canvas_viewer.dart';
 import 'widgets/image_drawing_screen.dart';
+import 'widgets/document_card.dart';
 
 void main() {
   runApp(const MyApp());
@@ -56,15 +59,19 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
 
     if (mounted) {
       if (isAuthenticated) {
+        // User is logged in, get stored user info
+        final phone = await authService.getPhone() ?? '';
+        final countryCode = await authService.getCountryCode() ?? '';
+
         // User is logged in, go to HomeScreen
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => const HomeScreen(
+            builder: (_) => HomeScreen(
               name:
                   '', // Name is not needed for display, can be fetched from profile
-              phone: '', // Phone is not needed for display
-              countryCode: '',
+              phone: phone,
+              countryCode: countryCode,
             ),
           ),
         );
@@ -354,6 +361,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           SnackBar(
                             content: Text(result.error ?? 'An error occurred'),
                             backgroundColor: const Color(0xffbd6051),
+                            duration: const Duration(seconds: 2),
                           ),
                         );
                       }
@@ -365,6 +373,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                             'Please enter a valid 10-digit phone number.',
                           ),
                           backgroundColor: Color(0xffbd6051),
+                          duration: Duration(seconds: 2),
                         ),
                       );
                     }
@@ -608,6 +617,7 @@ class _LoginPageState extends State<LoginPage> {
                           SnackBar(
                             content: Text(result.error ?? 'An error occurred'),
                             backgroundColor: const Color(0xffbd6051),
+                            duration: const Duration(seconds: 2),
                           ),
                         );
                       }
@@ -617,6 +627,7 @@ class _LoginPageState extends State<LoginPage> {
                           content: Text(
                               'Please enter a valid 10-digit phone number.'),
                           backgroundColor: Color(0xffbd6051),
+                          duration: Duration(seconds: 2),
                         ),
                       );
                     }
@@ -863,8 +874,14 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                       if (result.success) {
                         // Token is already stored by AuthService
                         // Extract country code from phone number
+                        // For "+1234567890", we want "1" (everything after + except last 10 digits)
                         String countryCode =
                             widget.phone.substring(1, widget.phone.length - 10);
+
+                        // Store user info for future app launches
+                        final authService = AuthService();
+                        await authService.storeUserInfo(
+                            widget.phone, countryCode);
 
                         // Navigate to home screen
                         Navigator.pushReplacement(
@@ -884,6 +901,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                             content:
                                 Text(result.error ?? 'Verification failed'),
                             backgroundColor: const Color(0xffbd6051),
+                            duration: const Duration(seconds: 2),
                           ),
                         );
                       }
@@ -892,6 +910,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                         const SnackBar(
                           content: Text('Please enter a valid 6-digit code'),
                           backgroundColor: Color(0xffbd6051),
+                          duration: Duration(seconds: 2),
                         ),
                       );
                     }
@@ -945,10 +964,12 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with RouteAware {
-  List<Map<String, String>> documents = []; // user-created documents
+  List<Map<String, dynamic>> documents = []; // user-created documents
   bool isLoadingDocuments = true;
   String? apiError;
   List<dynamic>? apiDocumentsList;
+  int _previewRefreshKey = 0; // Key to force preview refresh
+  Set<String> _modifiedDocumentIds = {}; // Track which documents were modified
 
   @override
   void initState() {
@@ -973,55 +994,85 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
   @override
   void didPopNext() {
     // Called when user returns to this screen from another screen
-    // Refresh the documents list
-    sendRequestWithCookie();
+    // Only invalidate previews for modified documents
+    final modifiedDocuments = DocumentPreviewService().getModifiedDocuments();
+    DocumentPreviewService().invalidateModifiedPreviews();
+
+    // Track which documents were modified for selective rebuilding
+    if (modifiedDocuments.isNotEmpty) {
+      setState(() {
+        _modifiedDocumentIds = modifiedDocuments;
+        _previewRefreshKey++;
+      });
+    }
+
+    // Refresh the documents list with a small delay to ensure server changes are reflected
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (mounted) {
+        sendRequestWithCookie();
+      }
+    });
   }
 
   Future<void> sendRequestWithCookie() async {
+    if (!mounted) return;
+    
     try {
-      if (mounted) {
-        setState(() {
-          isLoadingDocuments = true;
-          apiError = null;
-        });
-      }
+      // Single setState call for loading state
+      setState(() {
+        isLoadingDocuments = true;
+        apiError = null;
+      });
 
       // Use AuthService to list documents
       final authService = AuthService();
       final result = await authService.listDocuments();
 
+      if (!mounted) return;
+
       if (result.success && result.documents != null) {
-        if (mounted) {
-          setState(() {
-            apiDocumentsList = result.documents;
-            // Populate the documents list from API data
-            documents = result.documents!
-                .map((doc) {
-                  return {
-                    'id': doc['id']?.toString() ?? '',
-                    'title': doc['name']?.toString() ?? 'Untitled',
-                  };
-                })
-                .toList()
-                .cast<Map<String, String>>();
-            isLoadingDocuments = false;
-          });
-        }
-      } else {
-        if (mounted) {
-          setState(() {
-            apiError = result.error ?? 'Failed to load documents';
-            isLoadingDocuments = false;
-          });
-        }
-      }
-    } catch (e) {
-      if (mounted) {
+        // Initialize metadata for documents that don't have it
+        final metadataService = DocumentMetadataService();
+        await metadataService.initializeMissingMetadata(result.documents!.cast<Map<String, dynamic>>());
+        
+        // Get documents sorted by last modified time
+        final sortedDocuments = await metadataService.getDocumentsSortedByLastModified(result.documents!.cast<Map<String, dynamic>>());
+        
+        if (!mounted) return;
+        
+        // Single setState call for success state
         setState(() {
-          apiError = 'Error occurred: $e';
+          apiDocumentsList = sortedDocuments;
+          // Populate the documents list from sorted API data
+          documents = sortedDocuments
+              .map((doc) {
+                return {
+                  'id': doc['id']?.toString() ?? '',
+                  'title': doc['localTitle']?.toString() ?? doc['name']?.toString() ?? 'Untitled',
+                  'lastModified': doc['lastModified'],
+                };
+              })
+              .toList()
+              .cast<Map<String, dynamic>>();
+          isLoadingDocuments = false;
+        });
+      } else {
+        if (!mounted) return;
+        
+        // Single setState call for error state
+        setState(() {
+          apiError = result.error ?? 'Failed to load documents';
           isLoadingDocuments = false;
         });
       }
+    } catch (e) {
+      if (!mounted) return;
+      
+      // Single setState call for exception state
+      setState(() {
+        apiError = 'Error occurred: $e';
+        isLoadingDocuments = false;
+      });
     }
   }
 
@@ -1043,11 +1094,17 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       Navigator.pop(context);
 
       if (result.success && result.document != null) {
+        // Initialize metadata for the new document
+        final metadataService = DocumentMetadataService();
+        final documentId = result.document!['id']?.toString() ?? '';
+        await metadataService.updateLastModified(documentId, title: title);
+        
         if (mounted) {
           setState(() {
             documents.add({
-              'id': result.document!['id']?.toString() ?? '',
-              'title': result.document!['name']?.toString() ?? title,
+              'id': documentId,
+              'title': title,
+              'lastModified': DateTime.now().millisecondsSinceEpoch,
             });
           });
         }
@@ -1062,7 +1119,12 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                 title: result.document!['name']?.toString() ?? title,
               ),
             ),
-          );
+          ).then((wasModified) async {
+            // Refresh document list when returning from editing
+            if (wasModified == true) {
+              await sendRequestWithCookie();
+            }
+          });
         }
       } else {
         if (mounted) {
@@ -1085,6 +1147,128 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           SnackBar(
             content: Text('Error creating document: $e'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _deleteDocument(
+      BuildContext context, String documentId, String documentTitle) async {
+    // Show confirmation dialog
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      builder: (BuildContext context) {
+        return Dialog(
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.zero,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(24.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'Delete Document',
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Text(
+                    'Are you sure you want to delete "$documentTitle"? This action cannot be undone.'),
+                const SizedBox(height: 24),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(false),
+                      child: const Text('Cancel'),
+                    ),
+                    const SizedBox(width: 8),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).pop(true),
+                      style: TextButton.styleFrom(
+                        foregroundColor: Colors.red,
+                      ),
+                      child: const Text('Delete'),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (confirmed != true) return;
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      final authService = AuthService();
+      final result = await authService.deleteDocument(documentId);
+
+      // Hide loading indicator
+      Navigator.pop(context);
+
+      if (result.success) {
+        if (mounted) {
+          // Remove document from local list
+          setState(() {
+            documents.removeWhere((doc) => doc['id'] == documentId);
+          });
+
+          // Clear preview cache for deleted document
+          DocumentPreviewService().removeFromCache(documentId);
+          
+          // Remove metadata for deleted document
+          final metadataService = DocumentMetadataService();
+          await metadataService.removeDocumentMetadata(documentId);
+
+          // Show success message
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Document "$documentTitle" deleted successfully'),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.error ?? 'Failed to delete document'),
+              backgroundColor: const Color(0xffbd6051),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Hide loading indicator if still showing
+      if (Navigator.canPop(context)) {
+        Navigator.pop(context);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error deleting document: $e'),
+            backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -1104,6 +1288,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           SnackBar(
             content: Text('Upload failed: ${result.error}'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -1130,6 +1315,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           SnackBar(
             content: Text('Download failed: ${result.error}'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -1181,6 +1367,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           SnackBar(
             content: Text('Scanner error: $e'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -1199,6 +1386,21 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         toolbarHeight: 80,
         centerTitle: true,
         backgroundColor: const Color(0xfff0f0f0),
+        elevation: 0,
+        shadowColor: Colors.transparent,
+        flexibleSpace: Container(
+          decoration: BoxDecoration(
+            color: const Color(0xfff0f0f0),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withOpacity(0.1),
+                blurRadius: 4,
+                spreadRadius: 1,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
+        ),
         title: Column(
           children: [
             const Text(
@@ -1270,9 +1472,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           borderRadius: BorderRadius.zero, // Sharp edges
           child: Container(
             height: MediaQuery.of(context).size.height * 0.45,
-            width: 200,
+            width: 300,
             decoration: BoxDecoration(
-              color: const Color(0xffc8c8c8),
+              color: const Color(0xffcfcfcf),
               borderRadius: BorderRadius.zero, // Sharp edges
             ),
             child: Stack(
@@ -1414,106 +1616,52 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                     childAspectRatio: 0.75,
                   ),
                   itemBuilder: (context, index) {
-                    bool isHovered = false;
                     final docTitle = displayedDocuments[index]['title']!;
+                    final docId = displayedDocuments[index]['id'] ?? '';
+                    final isCreateNew = docTitle == 'Create New';
 
-                    return StatefulBuilder(
-                      builder: (context, setState) {
-                        return MouseRegion(
-                          onEnter: (_) => setState(() => isHovered = true),
-                          onExit: (_) => setState(() => isHovered = false),
-                          cursor: SystemMouseCursors.click,
-                          child: GestureDetector(
-                            onTap: () async {
-                              if (docTitle == 'Create New') {
-                                String? newTitle = await showDialog(
-                                  context: context,
-                                  builder: (_) => NewDocumentDialog(),
-                                );
-                                if (newTitle != null &&
-                                    newTitle.isNotEmpty &&
-                                    mounted) {
-                                  await addDocument(newTitle);
-                                }
-                              } else {
-                                if (mounted) {
-                                  // Get the document ID
-                                  final docId =
-                                      displayedDocuments[index]['id'] ?? '';
-
-                                  // Check before navigation
-                                  Navigator.push(
-                                    context,
-                                    MaterialPageRoute(
-                                      builder: (_) => DocumentPage(
-                                        documentId: docId,
-                                        title: docTitle,
-                                      ),
-                                    ),
-                                  );
-                                }
+                    return DocumentCard(
+                      documentId: docId,
+                      title: docTitle,
+                      isCreateNew: isCreateNew,
+                      refreshKey: _previewRefreshKey,
+                      wasModified: _modifiedDocumentIds.contains(docId),
+                      lastModified: displayedDocuments[index]['lastModified'],
+                      onTap: () async {
+                        if (isCreateNew) {
+                          String? newTitle = await showDialog(
+                            context: context,
+                            builder: (_) => NewDocumentDialog(),
+                          );
+                          if (newTitle != null &&
+                              newTitle.isNotEmpty &&
+                              mounted) {
+                            await addDocument(newTitle);
+                          }
+                        } else {
+                          if (mounted) {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => DocumentPage(
+                                  documentId: docId,
+                                  title: docTitle,
+                                ),
+                              ),
+                            ).then((wasModified) async {
+                              // Refresh document list when returning from editing
+                              if (wasModified == true) {
+                                await sendRequestWithCookie();
                               }
-                            },
-                            child: AnimatedContainer(
-                              duration: const Duration(milliseconds: 150),
-                              transform: Matrix4.identity()
-                                ..scale(isHovered ? 1.05 : 1.0),
-                              decoration: BoxDecoration(
-                                color: isHovered
-                                    ? const Color(0xffc3e3ea)
-                                    : const Color(0xfff0f0f0),
-                                borderRadius: BorderRadius.zero,
-                              ),
-                              padding: const EdgeInsets.all(12),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                crossAxisAlignment: CrossAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    docTitle == 'Create New'
-                                        ? Icons.add_outlined
-                                        : Icons.description,
-                                    size: 50,
-                                  ),
-                                  const SizedBox(height: 12),
-                                  if (docTitle == 'Create New') ...[
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      docTitle,
-                                      style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.w500,
-                                      ),
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ] else ...[
-                                    Text(
-                                      docTitle,
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.center,
-                                    ),
-                                    const SizedBox(height: 8),
-                                    Text(
-                                      'Preview of $docTitle',
-                                      style: const TextStyle(
-                                        fontSize: 12,
-                                        color: Colors.black54,
-                                      ),
-                                      maxLines: 2,
-                                      overflow: TextOverflow.ellipsis,
-                                      textAlign: TextAlign.center,
-                                    ),
-                                  ],
-                                ],
-                              ),
-                            ),
-                          ),
-                        );
+                            });
+                          }
+                        }
                       },
+                      onDelete: isCreateNew
+                          ? null
+                          : () async {
+                              await _deleteDocument(context, docId, docTitle);
+                            },
                     );
                   },
                 ),
@@ -1924,6 +2072,7 @@ class _DocumentPageState extends State<DocumentPage> {
   // Auto-save timer
   Timer? _autoSaveTimer;
   DateTime? _lastSaveTime;
+  bool _isSaving = false; // Prevent concurrent saves
 
   // Track when to refresh image paths (increment to force reload)
   int _imageRefreshCounter = 0;
@@ -1971,6 +2120,9 @@ class _DocumentPageState extends State<DocumentPage> {
         List<String> imageAttachmentIds = [];
 
         if (pages != null && pages.isNotEmpty) {
+          // Debug: Log all page IDs and their order
+          final pageIds = pages.map((p) => p['id']?.toString() ?? 'null').toList();
+          debugPrint('Main: Document ${widget.documentId} has ${pages.length} pages with IDs: $pageIds');
           // First pass: collect all image attachment IDs
           for (var page in pages) {
             final pageType = page['page_type'];
@@ -2051,6 +2203,9 @@ class _DocumentPageState extends State<DocumentPage> {
         if (widget.initialImagePages != null &&
             widget.initialImagePages!.isNotEmpty) {
           final imageCacheService = ImageCacheService();
+          // Preload scanned images before creating pages
+          await imageCacheService.preloadImages(widget.initialImagePages!);
+
           for (final imageId in widget.initialImagePages!) {
             final cachedImage = imageCacheService.getCachedImage(imageId);
             loadedPages.add(DocumentPageData.image(
@@ -2158,6 +2313,7 @@ class _DocumentPageState extends State<DocumentPage> {
           SnackBar(
             content: Text('Error renaming document: $e'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -2173,7 +2329,17 @@ class _DocumentPageState extends State<DocumentPage> {
   }
 
   Future<void> _saveDocument({bool showFeedback = true}) async {
+    // Prevent concurrent saves
+    if (_isSaving) {
+      debugPrint('Save: Already saving, skipping concurrent save');
+      return;
+    }
+    
+    _isSaving = true;
+    
     try {
+      debugPrint('Save: Starting save for document ${widget.documentId}');
+      
       // Convert all pages to API format
       final pages = _pages.map((page) {
         if (page.type == 'DigitalPage' && page.controller != null) {
@@ -2221,7 +2387,17 @@ class _DocumentPageState extends State<DocumentPage> {
 
       if (success) {
         _lastSaveTime = DateTime.now();
+        debugPrint('Save: Successfully saved document ${widget.documentId}');
+        
+        // Mark document as modified and invalidate its preview cache
+        DocumentPreviewService().markDocumentAsModified(widget.documentId);
+        DocumentPreviewService().invalidatePreview(widget.documentId);
+        
+        // Update last modified time in metadata
+        final metadataService = DocumentMetadataService();
+        await metadataService.updateLastModified(widget.documentId, title: widget.title);
       } else {
+        debugPrint('Save: Failed to save document ${widget.documentId}');
         if (showFeedback && mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -2232,23 +2408,31 @@ class _DocumentPageState extends State<DocumentPage> {
         }
       }
     } catch (e) {
+      debugPrint('Save: Error saving document ${widget.documentId}: $e');
       if (showFeedback && mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text('Error saving document: $e'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
+    } finally {
+      _isSaving = false;
+      debugPrint('Save: Finished save for document ${widget.documentId}');
     }
   }
 
-  void _addDigitalPage() {
+  Future<void> _addDigitalPage() async {
     setState(() {
       _pages.add(DocumentPageData.digital());
       _currentPageIndex = _pages.length - 1;
       _pageIndexNotifier.value = _currentPageIndex;
     });
+    
+    // Auto-save after adding page
+    await _saveDocument(showFeedback: false);
   }
 
   Future<void> _addImagePage() async {
@@ -2288,8 +2472,8 @@ class _DocumentPageState extends State<DocumentPage> {
             _pageIndexNotifier.value = _currentPageIndex;
           });
 
-          // Auto-save after adding image
-          _saveDocument(showFeedback: false);
+    // Auto-save after adding image
+    await _saveDocument(showFeedback: false);
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -2307,13 +2491,14 @@ class _DocumentPageState extends State<DocumentPage> {
           SnackBar(
             content: Text('Error adding image: $e'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
     }
   }
 
-  void _deletePage(int index) {
+  Future<void> _deletePage(int index) async {
     if (_pages.length <= 1) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -2335,7 +2520,7 @@ class _DocumentPageState extends State<DocumentPage> {
     });
 
     // Auto-save after deleting
-    _saveDocument(showFeedback: false);
+    await _saveDocument(showFeedback: false);
   }
 
   Future<void> _drawOnImage(int index) async {
@@ -2393,7 +2578,7 @@ class _DocumentPageState extends State<DocumentPage> {
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.black87),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, true),
           ),
           title: const Text('Loading...'),
         ),
@@ -2411,7 +2596,7 @@ class _DocumentPageState extends State<DocumentPage> {
           elevation: 0,
           leading: IconButton(
             icon: const Icon(Icons.arrow_back, color: Colors.black87),
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(context, true),
           ),
           title: const Text('Error'),
         ),
@@ -2448,7 +2633,11 @@ class _DocumentPageState extends State<DocumentPage> {
         elevation: 0,
         leading: IconButton(
           icon: const Icon(Icons.arrow_back, color: Colors.black87),
-          onPressed: () => Navigator.pop(context),
+          onPressed: () {
+            // Save before navigating back
+            _saveDocument(showFeedback: false);
+            Navigator.pop(context, true); // Return true to indicate document was modified
+          },
         ),
         title: _isEditingTitle
             ? TextField(
@@ -2500,11 +2689,11 @@ class _DocumentPageState extends State<DocumentPage> {
                 PopupMenuButton<String>(
                   icon: Icon(Icons.add, color: Colors.grey[700]),
                   tooltip: 'Add Page',
-                  onSelected: (value) {
+                  onSelected: (value) async {
                     if (value == 'digital') {
-                      _addDigitalPage();
+                      await _addDigitalPage();
                     } else if (value == 'image') {
-                      _addImagePage();
+                      await _addImagePage();
                     }
                   },
                   itemBuilder: (context) => [
@@ -2565,7 +2754,7 @@ class _DocumentPageState extends State<DocumentPage> {
 // ---------------- SCANNED DOCUMENT OPTIONS PAGE ----------------
 class ScannedDocumentOptionsPage extends StatefulWidget {
   final List<Uint8List> scannedImages;
-  final List<Map<String, String>> existingDocuments;
+  final List<Map<String, dynamic>> existingDocuments;
 
   const ScannedDocumentOptionsPage({
     super.key,
@@ -2584,6 +2773,16 @@ class _ScannedDocumentOptionsPageState
   String? _selectedDocumentId;
   final TextEditingController _titleController = TextEditingController();
   bool _isProcessing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _titleController.addListener(() {
+      setState(() {
+        // Trigger rebuild when text changes to update button state
+      });
+    });
+  }
 
   @override
   void dispose() {
@@ -2680,6 +2879,14 @@ class _ScannedDocumentOptionsPageState
                               : const Color(0xffc3e3ea),
                           width: 2,
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            spreadRadius: 1,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: Row(
                         children: [
@@ -2732,6 +2939,11 @@ class _ScannedDocumentOptionsPageState
                         filled: true,
                         fillColor: const Color(0xfffafafa),
                       ),
+                      onSubmitted: (_) {
+                        if (_canProceed()) {
+                          _handleProceed();
+                        }
+                      },
                     ),
                   ],
 
@@ -2757,6 +2969,14 @@ class _ScannedDocumentOptionsPageState
                               : const Color(0xffc3e3ea),
                           width: 2,
                         ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 4,
+                            spreadRadius: 1,
+                            offset: const Offset(0, 2),
+                          ),
+                        ],
                       ),
                       child: Row(
                         children: [
@@ -2804,6 +3024,14 @@ class _ScannedDocumentOptionsPageState
                         decoration: BoxDecoration(
                           color: const Color(0xfffafafa),
                           borderRadius: BorderRadius.zero,
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4,
+                              spreadRadius: 1,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
                         child: Text(
                           'No existing documents found. Create a new document instead.',
@@ -2818,6 +3046,14 @@ class _ScannedDocumentOptionsPageState
                           color: const Color(0xfffafafa),
                           borderRadius: BorderRadius.zero,
                           border: Border.all(color: const Color(0xffc3e3ea)),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withOpacity(0.1),
+                              blurRadius: 4,
+                              spreadRadius: 1,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
                         ),
                         child: DropdownButton<String>(
                           value: _selectedDocumentId,
@@ -2920,6 +3156,7 @@ class _ScannedDocumentOptionsPageState
           SnackBar(
             content: Text('Error: $e'),
             backgroundColor: const Color(0xffbd6051),
+            duration: const Duration(seconds: 2),
           ),
         );
       }
@@ -2941,6 +3178,10 @@ class _ScannedDocumentOptionsPageState
     if (documentId == null) {
       throw Exception('Document ID not returned');
     }
+
+    // Initialize metadata for the new document
+    final metadataService = DocumentMetadataService();
+    await metadataService.updateLastModified(documentId, title: title);
 
     // Navigate to the new document with the image pages
     if (mounted) {
@@ -2984,7 +3225,7 @@ class _ScannedDocumentOptionsPageState
 class ProfilePage extends StatelessWidget {
   final String name;
   final String phone;
-  String countryCode;
+  final String countryCode;
 
   ProfilePage({
     super.key,
@@ -2994,19 +3235,18 @@ class ProfilePage extends StatelessWidget {
   });
 
   String getCensoredPhone(String phone, String code) {
+    // Extract the last 4 digits from the phone number
     final digits = phone.replaceAll(RegExp(r'\D'), '');
-    countryCode = code;
-    String areaCode = '***';
-    String mid = '***';
-    String end = '';
-    if (digits.length == 11) {
-      end = digits.substring(7);
-    } else if (digits.length == 12) {
-      end = digits.substring(8);
-    } else if (digits.length == 13) {
-      end = digits.substring(9);
+
+    String lastFour = '';
+
+    if (digits.length >= 4) {
+      lastFour = digits.substring(digits.length - 4);
+    } else {
+      lastFour = digits; // Show whatever digits we have if less than 4
     }
-    return '+$countryCode ($areaCode) $mid-$end';
+
+    return '+$code (***) ***-$lastFour';
   }
 
   @override
@@ -3053,6 +3293,14 @@ class ProfilePage extends StatelessWidget {
               decoration: BoxDecoration(
                 color: const Color(0xffc7ffbf),
                 borderRadius: BorderRadius.zero,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                    spreadRadius: 1,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: Text(
                 name,
@@ -3080,6 +3328,14 @@ class ProfilePage extends StatelessWidget {
               decoration: BoxDecoration(
                 color: const Color(0xffc7ffbf),
                 borderRadius: BorderRadius.zero,
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.black.withOpacity(0.1),
+                    blurRadius: 4,
+                    spreadRadius: 1,
+                    offset: const Offset(0, 2),
+                  ),
+                ],
               ),
               child: Text(
                 getCensoredPhone(phone, countryCode),
@@ -3343,4 +3599,3 @@ class PhoneNumberFormatter extends TextInputFormatter {
     );
   }
 }
-

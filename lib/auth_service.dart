@@ -4,6 +4,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 class AuthService {
   static const String _tokenKey = 'auth_token';
+  static const String _phoneKey = 'user_phone';
+  static const String _countryCodeKey = 'user_country_code';
   static const String _baseUrl = 'https://draftly-notes.com';
 
   // Singleton pattern
@@ -23,10 +25,31 @@ class AuthService {
     return prefs.getString(_tokenKey);
   }
 
+  // Store user phone and country code
+  Future<void> storeUserInfo(String phone, String countryCode) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_phoneKey, phone);
+    await prefs.setString(_countryCodeKey, countryCode);
+  }
+
+  // Retrieve stored phone
+  Future<String?> getPhone() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_phoneKey);
+  }
+
+  // Retrieve stored country code
+  Future<String?> getCountryCode() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString(_countryCodeKey);
+  }
+
   // Clear stored token (for logout)
   Future<void> clearToken() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_tokenKey);
+    await prefs.remove(_phoneKey);
+    await prefs.remove(_countryCodeKey);
   }
 
   // Check if user is authenticated
@@ -408,7 +431,8 @@ class AuthService {
   }
 
   // Get drawing list for a specific page
-  Future<DrawingListResult> getDrawingList(String documentId, int pageIndex) async {
+  Future<DrawingListResult> getDrawingList(
+      String documentId, int pageIndex) async {
     try {
       final response = await makeAuthenticatedRequest(
         '/api/docs/get_drawing_list/$documentId/$pageIndex',
@@ -463,8 +487,9 @@ class AuthService {
         throw Exception('No authentication token found');
       }
 
-      final url = Uri.parse('$_baseUrl/api/docs/save_drawing_list/$documentId/$pageIndex');
-      
+      final url = Uri.parse(
+          '$_baseUrl/api/docs/save_drawing_list/$documentId/$pageIndex');
+
       final response = await http.post(
         url,
         headers: {
@@ -477,6 +502,30 @@ class AuthService {
       return response.statusCode == 200;
     } catch (e, stackTrace) {
       return false;
+    }
+  }
+
+  // Delete a document
+  Future<DeleteDocumentResult> deleteDocument(String documentId) async {
+    try {
+      final response = await makeAuthenticatedRequest(
+        '/api/docs/delete/$documentId',
+        method: 'POST',
+      );
+
+      if (response.statusCode == 200) {
+        return DeleteDocumentResult(success: true);
+      } else {
+        return DeleteDocumentResult(
+          success: false,
+          error: 'Failed to delete document: ${response.statusCode}',
+        );
+      }
+    } catch (e) {
+      return DeleteDocumentResult(
+        success: false,
+        error: 'Error deleting document: $e',
+      );
     }
   }
 
@@ -644,3 +693,12 @@ class DrawingListResult {
   });
 }
 
+class DeleteDocumentResult {
+  final bool success;
+  final String? error;
+
+  DeleteDocumentResult({
+    required this.success,
+    this.error,
+  });
+}
