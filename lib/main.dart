@@ -1,7 +1,6 @@
 import 'package:http/http.dart' as http;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter/gestures.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:async';
@@ -17,6 +16,7 @@ import 'services/document_metadata_service.dart';
 import 'widgets/continuous_canvas_viewer.dart';
 import 'widgets/image_drawing_screen.dart';
 import 'widgets/document_card.dart';
+import 'widgets/document_transition_overlay.dart';
 
 void main() {
   runApp(const MyApp());
@@ -68,18 +68,16 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
           context,
           MaterialPageRoute(
             builder: (_) => HomeScreen(
-              name:
-                  '', // Name is not needed for display, can be fetched from profile
               phone: phone,
               countryCode: countryCode,
             ),
           ),
         );
       } else {
-        // User is not logged in, go to SignUpScreen
+        // User is not logged in, go to PhoneAuthScreen
         Navigator.pushReplacement(
           context,
-          MaterialPageRoute(builder: (_) => const SignUpScreen()),
+          MaterialPageRoute(builder: (_) => const PhoneAuthScreen()),
         );
       }
     }
@@ -111,38 +109,37 @@ class _AuthCheckScreenState extends State<AuthCheckScreen> {
   }
 }
 
-// ---------------- SIGN UP SCREEN ----------------
-class SignUpScreen extends StatefulWidget {
-  const SignUpScreen({super.key});
+// ---------------- PHONE AUTH SCREEN ----------------
+class PhoneAuthScreen extends StatefulWidget {
+  const PhoneAuthScreen({super.key});
 
   @override
-  _SignUpScreenState createState() => _SignUpScreenState();
+  _PhoneAuthScreenState createState() => _PhoneAuthScreenState();
 }
 
-class _SignUpScreenState extends State<SignUpScreen> {
-  final TextEditingController nameController = TextEditingController();
+class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController countryCodeController = TextEditingController(
     text: '1',
   ); // Default country code
 
   final ScrollController _scrollController = ScrollController();
-  final FocusNode _nameFocus = FocusNode();
   final FocusNode _phoneFocus = FocusNode();
+  final FocusNode _countryCodeFocus = FocusNode();
 
   @override
   void initState() {
     super.initState();
-    _nameFocus.addListener(() => _scrollToFocusedField(_nameFocus));
     _phoneFocus.addListener(() => _scrollToFocusedField(_phoneFocus));
+    _countryCodeFocus
+        .addListener(() => _scrollToFocusedField(_countryCodeFocus));
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
-    _nameFocus.dispose();
     _phoneFocus.dispose();
-    nameController.dispose();
+    _countryCodeFocus.dispose();
     phoneController.dispose();
     countryCodeController.dispose();
     super.dispose();
@@ -164,6 +161,96 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
   }
 
+  Future<void> _handleContinue() async {
+    final phoneNumber = phoneController.text.trim();
+    final countryCode = countryCodeController.text.trim();
+
+    if (phoneNumber.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter your phone number'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    if (countryCode.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter your country code'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Combine country code and phone number
+    final fullPhoneNumber = '+$countryCode$phoneNumber';
+
+    try {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(
+            valueColor: AlwaysStoppedAnimation<Color>(Color(0xff102837)),
+          ),
+        ),
+      );
+
+      final authService = AuthService();
+      final result = await authService.sendPhoneVerification(fullPhoneNumber);
+
+      // Hide loading indicator
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      if (result.success) {
+        // Store phone info for later use
+        await authService.storeUserInfo(phoneNumber, countryCode);
+
+        // Navigate to verification screen
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (context) =>
+                  CodeVerificationPage(phone: fullPhoneNumber),
+            ),
+          );
+        }
+      } else {
+        // Show error message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.error ?? 'Failed to send verification code'),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      // Hide loading indicator
+      if (mounted) {
+        Navigator.of(context).pop();
+      }
+
+      // Show error message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -180,7 +267,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 child: Column(
                   children: [
                     const Text(
-                      'Create New Account',
+                      'Enter your phone number to get started',
                       style: TextStyle(
                         fontSize: 24,
                         fontWeight: FontWeight.bold,
@@ -188,68 +275,10 @@ class _SignUpScreenState extends State<SignUpScreen> {
                       ),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 6),
-                    RichText(
-                      textAlign: TextAlign.center,
-                      text: TextSpan(
-                        text: 'Already Registered? ',
-                        style: const TextStyle(
-                            fontSize: 14, color: Colors.black54),
-                        children: [
-                          TextSpan(
-                            text: 'Log in here.',
-                            style: const TextStyle(
-                              color: Color(0xffc3e3ea),
-                              decoration: TextDecoration.underline,
-                            ),
-                            recognizer: TapGestureRecognizer()
-                              ..onTap = () {
-                                Navigator.pushReplacement(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => const LoginPage(),
-                                  ),
-                                );
-                              },
-                          ),
-                        ],
-                      ),
-                    ),
                   ],
                 ),
               ),
               const SizedBox(height: 48),
-
-              // NAME input
-              const Text(
-                'NAME',
-                style: TextStyle(
-                  letterSpacing: 2,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: nameController,
-                focusNode: _nameFocus,
-                decoration: InputDecoration(
-                  hintText: 'Enter your name',
-                  filled: true,
-                  fillColor: Colors.grey[300],
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 26,
-                    horizontal: 12,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.zero,
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                textAlign: TextAlign.center,
-              ),
-
-              const SizedBox(height: 54),
 
               // PHONE input
               const Text(
@@ -274,6 +303,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ),
                     child: TextField(
                       controller: countryCodeController,
+                      focusNode: _countryCodeFocus,
                       keyboardType: TextInputType.number,
                       inputFormatters: [
                         FilteringTextInputFormatter.digitsOnly,
@@ -284,6 +314,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         border: InputBorder.none,
                       ),
                       textAlign: TextAlign.center,
+                      onSubmitted: (_) => _phoneFocus.requestFocus(),
                     ),
                   ),
                   const SizedBox(width: 12),
@@ -307,6 +338,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           border: InputBorder.none,
                         ),
                         textAlign: TextAlign.center,
+                        onSubmitted: (_) => _handleContinue(),
                       ),
                     ),
                   ),
@@ -318,66 +350,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: () async {
-                    String name = nameController.text.trim();
-                    String rawPhone = phoneController.text;
-                    String digitsOnly = rawPhone.replaceAll(RegExp(r'\D'), '');
-
-                    if (digitsOnly.length == 10) {
-                      String fullPhone =
-                          '+${countryCodeController.text}$digitsOnly';
-
-                      // Show loading indicator
-                      showDialog(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (context) => const Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-
-                      // Call API to send verification code
-                      final authService = AuthService();
-                      final result =
-                          await authService.sendPhoneVerification(fullPhone);
-
-                      // Hide loading indicator
-                      Navigator.pop(context);
-
-                      if (result.success) {
-                        // Navigate to code verification page
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => CodeVerificationPage(
-                              name: name,
-                              phone: fullPhone,
-                            ),
-                          ),
-                        );
-                      } else {
-                        // Show error message
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(result.error ?? 'An error occurred'),
-                            backgroundColor: const Color(0xffbd6051),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
-                      }
-                    } else {
-                      // Show an error message (e.g., using a SnackBar)
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                            'Please enter a valid 10-digit phone number.',
-                          ),
-                          backgroundColor: Color(0xffbd6051),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
+                  onPressed: _handleContinue,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff102837),
                     shape: RoundedRectangleBorder(
@@ -385,7 +358,7 @@ class _SignUpScreenState extends State<SignUpScreen> {
                     ),
                   ),
                   child: const Text(
-                    'Sign up',
+                    'Continue',
                     style: TextStyle(color: Colors.white),
                   ),
                 ),
@@ -398,265 +371,11 @@ class _SignUpScreenState extends State<SignUpScreen> {
   }
 }
 
-// ---------------- LOGIN SCREEN ----------------
-class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
-
-  @override
-  _LoginPageState createState() => _LoginPageState();
-}
-
-class _LoginPageState extends State<LoginPage> {
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController phoneController = TextEditingController();
-  final TextEditingController countryCodeController = TextEditingController(
-    text: '1',
-  );
-
-  final ScrollController _scrollController = ScrollController();
-  final FocusNode _nameFocus = FocusNode();
-  final FocusNode _phoneFocus = FocusNode();
-
-  @override
-  void initState() {
-    super.initState();
-    _nameFocus.addListener(() => _scrollToFocusedField(_nameFocus));
-    _phoneFocus.addListener(() => _scrollToFocusedField(_phoneFocus));
-  }
-
-  @override
-  void dispose() {
-    _scrollController.dispose();
-    _nameFocus.dispose();
-    _phoneFocus.dispose();
-    nameController.dispose();
-    phoneController.dispose();
-    countryCodeController.dispose();
-    super.dispose();
-  }
-
-  void _scrollToFocusedField(FocusNode focusNode) {
-    if (focusNode.hasFocus) {
-      // Small delay to ensure keyboard is fully shown
-      Future.delayed(const Duration(milliseconds: 300), () {
-        if (mounted) {
-          _scrollController.animateTo(
-            _scrollController.position.maxScrollExtent *
-                0.8, // Scroll to ~80% of available scroll
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeOut,
-          );
-        }
-      });
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xfff0f0f0),
-      appBar: AppBar(
-        title: const Text('Login', style: TextStyle(color: Color(0xff1c1c1c))),
-        backgroundColor: const Color(0xfff0f0f0),
-      ),
-      body: SingleChildScrollView(
-        controller: _scrollController,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 48),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              const Text(
-                'Welcome Back',
-                style: TextStyle(
-                  fontSize: 24,
-                  fontWeight: FontWeight.bold,
-                  color: Color(0xff102837),
-                ),
-              ),
-              const SizedBox(height: 48),
-
-              // NAME input
-              const Text(
-                'NAME',
-                style: TextStyle(
-                  letterSpacing: 2,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: nameController,
-                focusNode: _nameFocus,
-                decoration: InputDecoration(
-                  hintText: 'Enter your name',
-                  filled: true,
-                  fillColor: Colors.grey[300],
-                  contentPadding: const EdgeInsets.symmetric(
-                    vertical: 14,
-                    horizontal: 12,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.zero,
-                    borderSide: BorderSide.none,
-                  ),
-                ),
-                textAlign: TextAlign.center,
-              ),
-
-              const SizedBox(height: 24),
-
-              // Phone input
-              const Text(
-                'PHONE NUMBER',
-                style: TextStyle(
-                  letterSpacing: 2,
-                  fontSize: 16,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Text('+'),
-                  const SizedBox(width: 8),
-                  Container(
-                    width: 60,
-                    decoration: BoxDecoration(
-                      color: Colors.grey[300],
-                      borderRadius: BorderRadius.zero,
-                    ),
-                    child: TextField(
-                      controller: countryCodeController,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(3),
-                      ],
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        contentPadding: EdgeInsets.symmetric(vertical: 14),
-                      ),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Container(
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.zero,
-                      ),
-                      child: TextField(
-                        controller: phoneController,
-                        focusNode: _phoneFocus,
-                        keyboardType: TextInputType.number,
-                        inputFormatters: [PhoneNumberFormatter()],
-                        decoration: const InputDecoration(
-                          hintText: '##########',
-                          border: InputBorder.none,
-                          contentPadding: EdgeInsets.symmetric(
-                            vertical: 14,
-                            horizontal: 12,
-                          ),
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-
-              const SizedBox(height: 48),
-
-              SizedBox(
-                width: double.infinity,
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: () async {
-                    String name = nameController.text.trim();
-                    String rawPhone = phoneController.text;
-                    String digitsOnly = rawPhone.replaceAll(RegExp(r'\D'), '');
-
-                    if (digitsOnly.length == 10) {
-                      String fullPhone =
-                          '+${countryCodeController.text}$digitsOnly';
-
-                      // Show loading indicator
-                      showDialog(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (context) => const Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-
-                      // Call API to send verification code
-                      final authService = AuthService();
-                      final result =
-                          await authService.sendPhoneVerification(fullPhone);
-
-                      // Hide loading indicator
-                      Navigator.pop(context);
-
-                      if (result.success) {
-                        // Navigate to code verification page
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => CodeVerificationPage(
-                              name: name,
-                              phone: fullPhone,
-                            ),
-                          ),
-                        );
-                      } else {
-                        // Show error message
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content: Text(result.error ?? 'An error occurred'),
-                            backgroundColor: const Color(0xffbd6051),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
-                      }
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text(
-                              'Please enter a valid 10-digit phone number.'),
-                          backgroundColor: Color(0xffbd6051),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: const Color(0xff102837),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.zero,
-                    ),
-                  ),
-                  child: const Text('Continue',
-                      style: TextStyle(color: Colors.white)),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 // ---------------- CODE VERIFICATION SCREEN ----------------
 class CodeVerificationPage extends StatefulWidget {
-  final String name;
   final String phone;
 
-  const CodeVerificationPage(
-      {super.key, required this.name, required this.phone});
+  const CodeVerificationPage({super.key, required this.phone});
 
   @override
   _CodeVerificationPageState createState() => _CodeVerificationPageState();
@@ -695,6 +414,74 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
           );
         }
       });
+    }
+  }
+
+  Future<void> _handleVerifyCode() async {
+    if (codeController.text.length == 6) {
+      // Show loading indicator
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(
+          child: CircularProgressIndicator(),
+        ),
+      );
+
+      // Call API to verify code
+      final authService = AuthService();
+      final result = await authService.verifyCode(
+        widget.phone,
+        codeController.text,
+      );
+
+      // Hide loading indicator
+      if (mounted) {
+        Navigator.pop(context);
+      }
+
+      if (result.success) {
+        // Token is already stored by AuthService
+        // Extract country code from phone number
+        // For "+1234567890", we want "1" (everything after + except last 10 digits)
+        String countryCode =
+            widget.phone.substring(1, widget.phone.length - 10);
+
+        // Store user info for future app launches
+        await authService.storeUserInfo(widget.phone, countryCode);
+
+        // Navigate to home screen
+        if (mounted) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => HomeScreen(
+                phone: widget.phone,
+                countryCode: countryCode,
+              ),
+            ),
+          );
+        }
+      } else {
+        // Show error message
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(result.error ?? 'Verification failed'),
+              backgroundColor: const Color(0xffbd6051),
+              duration: const Duration(seconds: 2),
+            ),
+          );
+        }
+      }
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid 6-digit code'),
+          backgroundColor: Color(0xffbd6051),
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -767,6 +554,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                 ),
                 child: TextField(
                   controller: codeController,
+                  focusNode: _codeFocus,
                   keyboardType: TextInputType.number,
                   inputFormatters: [
                     FilteringTextInputFormatter.digitsOnly,
@@ -791,6 +579,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                     letterSpacing: 8,
                   ),
                   obscureText: false,
+                  onSubmitted: (_) => _handleVerifyCode(),
                 ),
               ),
 
@@ -850,71 +639,7 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                 width: double.infinity,
                 height: 50,
                 child: ElevatedButton(
-                  onPressed: () async {
-                    if (codeController.text.length == 6) {
-                      // Show loading indicator
-                      showDialog(
-                        context: context,
-                        barrierDismissible: false,
-                        builder: (context) => const Center(
-                          child: CircularProgressIndicator(),
-                        ),
-                      );
-
-                      // Call API to verify code
-                      final authService = AuthService();
-                      final result = await authService.verifyCode(
-                        widget.phone,
-                        codeController.text,
-                      );
-
-                      // Hide loading indicator
-                      Navigator.pop(context);
-
-                      if (result.success) {
-                        // Token is already stored by AuthService
-                        // Extract country code from phone number
-                        // For "+1234567890", we want "1" (everything after + except last 10 digits)
-                        String countryCode =
-                            widget.phone.substring(1, widget.phone.length - 10);
-
-                        // Store user info for future app launches
-                        final authService = AuthService();
-                        await authService.storeUserInfo(
-                            widget.phone, countryCode);
-
-                        // Navigate to home screen
-                        Navigator.pushReplacement(
-                          context,
-                          MaterialPageRoute(
-                            builder: (_) => HomeScreen(
-                              name: widget.name,
-                              phone: widget.phone,
-                              countryCode: countryCode,
-                            ),
-                          ),
-                        );
-                      } else {
-                        // Show error message
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(
-                            content:
-                                Text(result.error ?? 'Verification failed'),
-                            backgroundColor: const Color(0xffbd6051),
-                            duration: const Duration(seconds: 2),
-                          ),
-                        );
-                      }
-                    } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Please enter a valid 6-digit code'),
-                          backgroundColor: Color(0xffbd6051),
-                          duration: Duration(seconds: 2),
-                        ),
-                      );
-                    }
-                  },
+                  onPressed: _handleVerifyCode,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: const Color(0xff102837),
                     shape: RoundedRectangleBorder(
@@ -948,13 +673,11 @@ http.Response returnJSON() {
 
 // ---------------- HOME SCREEN ----------------
 class HomeScreen extends StatefulWidget {
-  final String name;
   final String phone;
   final String countryCode;
 
   const HomeScreen({
     super.key,
-    required this.name,
     required this.phone,
     required this.countryCode,
   });
@@ -1016,7 +739,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
   Future<void> sendRequestWithCookie() async {
     if (!mounted) return;
-    
+
     try {
       // Single setState call for loading state
       setState(() {
@@ -1033,13 +756,16 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       if (result.success && result.documents != null) {
         // Initialize metadata for documents that don't have it
         final metadataService = DocumentMetadataService();
-        await metadataService.initializeMissingMetadata(result.documents!.cast<Map<String, dynamic>>());
-        
+        await metadataService.initializeMissingMetadata(
+            result.documents!.cast<Map<String, dynamic>>());
+
         // Get documents sorted by last modified time
-        final sortedDocuments = await metadataService.getDocumentsSortedByLastModified(result.documents!.cast<Map<String, dynamic>>());
-        
+        final sortedDocuments =
+            await metadataService.getDocumentsSortedByLastModified(
+                result.documents!.cast<Map<String, dynamic>>());
+
         if (!mounted) return;
-        
+
         // Single setState call for success state
         setState(() {
           apiDocumentsList = sortedDocuments;
@@ -1048,7 +774,9 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
               .map((doc) {
                 return {
                   'id': doc['id']?.toString() ?? '',
-                  'title': doc['localTitle']?.toString() ?? doc['name']?.toString() ?? 'Untitled',
+                  'title': doc['localTitle']?.toString() ??
+                      doc['name']?.toString() ??
+                      'Untitled',
                   'lastModified': doc['lastModified'],
                 };
               })
@@ -1058,7 +786,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         });
       } else {
         if (!mounted) return;
-        
+
         // Single setState call for error state
         setState(() {
           apiError = result.error ?? 'Failed to load documents';
@@ -1067,7 +795,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
       }
     } catch (e) {
       if (!mounted) return;
-      
+
       // Single setState call for exception state
       setState(() {
         apiError = 'Error occurred: $e';
@@ -1098,7 +826,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
         final metadataService = DocumentMetadataService();
         final documentId = result.document!['id']?.toString() ?? '';
         await metadataService.updateLastModified(documentId, title: title);
-        
+
         if (mounted) {
           setState(() {
             documents.add({
@@ -1232,7 +960,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
 
           // Clear preview cache for deleted document
           DocumentPreviewService().removeFromCache(documentId);
-          
+
           // Remove metadata for deleted document
           final metadataService = DocumentMetadataService();
           await metadataService.removeDocumentMetadata(documentId);
@@ -1474,7 +1202,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
             height: MediaQuery.of(context).size.height * 0.45,
             width: 300,
             decoration: BoxDecoration(
-              color: const Color(0xffcfcfcf),
+              color: const Color(0xffdfdfdf),
               borderRadius: BorderRadius.zero, // Sharp edges
             ),
             child: Stack(
@@ -1484,7 +1212,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                   children: [
                     const DrawerHeader(
                       decoration: BoxDecoration(
-                        color: Color(0xffcccccc),
+                        color: Color(0xffdcdcdc),
                         borderRadius: BorderRadius.zero,
                       ),
                       child: Center(
@@ -1517,7 +1245,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                             context,
                             MaterialPageRoute(
                               builder: (_) => ProfilePage(
-                                name: widget.name,
                                 phone: widget.phone,
                                 countryCode: widget.countryCode,
                               ),
@@ -1545,7 +1272,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                             rootNavigator: true,
                           ).pushAndRemoveUntil(
                             MaterialPageRoute(
-                                builder: (_) => const SignUpScreen()),
+                                builder: (_) => const PhoneAuthScreen()),
                             (route) => false,
                           );
                         }
@@ -1627,7 +1354,7 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                       refreshKey: _previewRefreshKey,
                       wasModified: _modifiedDocumentIds.contains(docId),
                       lastModified: displayedDocuments[index]['lastModified'],
-                      onTap: () async {
+                      onTap: (Rect previewRect, Uint8List? previewImage) async {
                         if (isCreateNew) {
                           String? newTitle = await showDialog(
                             context: context,
@@ -1643,9 +1370,17 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => DocumentPage(
-                                  documentId: docId,
-                                  title: docTitle,
+                                builder: (_) => DocumentTransitionOverlay(
+                                  sourceRect: previewRect,
+                                  previewImage: previewImage,
+                                  documentTitle: docTitle,
+                                  onTransitionComplete: () {
+                                    // Transition completed, overlay will be removed
+                                  },
+                                  child: DocumentPage(
+                                    documentId: docId,
+                                    title: docTitle,
+                                  ),
                                 ),
                               ),
                             ).then((wasModified) async {
@@ -1715,7 +1450,7 @@ class ErrorScreen extends StatelessWidget {
 
                   Navigator.pushAndRemoveUntil(
                     context,
-                    MaterialPageRoute(builder: (_) => const SignUpScreen()),
+                    MaterialPageRoute(builder: (_) => const PhoneAuthScreen()),
                     (route) => false,
                   );
                 },
@@ -2121,8 +1856,10 @@ class _DocumentPageState extends State<DocumentPage> {
 
         if (pages != null && pages.isNotEmpty) {
           // Debug: Log all page IDs and their order
-          final pageIds = pages.map((p) => p['id']?.toString() ?? 'null').toList();
-          debugPrint('Main: Document ${widget.documentId} has ${pages.length} pages with IDs: $pageIds');
+          final pageIds =
+              pages.map((p) => p['id']?.toString() ?? 'null').toList();
+          debugPrint(
+              'Main: Document ${widget.documentId} has ${pages.length} pages with IDs: $pageIds');
           // First pass: collect all image attachment IDs
           for (var page in pages) {
             final pageType = page['page_type'];
@@ -2334,12 +2071,12 @@ class _DocumentPageState extends State<DocumentPage> {
       debugPrint('Save: Already saving, skipping concurrent save');
       return;
     }
-    
+
     _isSaving = true;
-    
+
     try {
       debugPrint('Save: Starting save for document ${widget.documentId}');
-      
+
       // Convert all pages to API format
       final pages = _pages.map((page) {
         if (page.type == 'DigitalPage' && page.controller != null) {
@@ -2388,14 +2125,15 @@ class _DocumentPageState extends State<DocumentPage> {
       if (success) {
         _lastSaveTime = DateTime.now();
         debugPrint('Save: Successfully saved document ${widget.documentId}');
-        
+
         // Mark document as modified and invalidate its preview cache
         DocumentPreviewService().markDocumentAsModified(widget.documentId);
         DocumentPreviewService().invalidatePreview(widget.documentId);
-        
+
         // Update last modified time in metadata
         final metadataService = DocumentMetadataService();
-        await metadataService.updateLastModified(widget.documentId, title: widget.title);
+        await metadataService.updateLastModified(widget.documentId,
+            title: widget.title);
       } else {
         debugPrint('Save: Failed to save document ${widget.documentId}');
         if (showFeedback && mounted) {
@@ -2430,7 +2168,7 @@ class _DocumentPageState extends State<DocumentPage> {
       _currentPageIndex = _pages.length - 1;
       _pageIndexNotifier.value = _currentPageIndex;
     });
-    
+
     // Auto-save after adding page
     await _saveDocument(showFeedback: false);
   }
@@ -2472,8 +2210,8 @@ class _DocumentPageState extends State<DocumentPage> {
             _pageIndexNotifier.value = _currentPageIndex;
           });
 
-    // Auto-save after adding image
-    await _saveDocument(showFeedback: false);
+          // Auto-save after adding image
+          await _saveDocument(showFeedback: false);
         } else {
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(
@@ -2636,7 +2374,8 @@ class _DocumentPageState extends State<DocumentPage> {
           onPressed: () {
             // Save before navigating back
             _saveDocument(showFeedback: false);
-            Navigator.pop(context, true); // Return true to indicate document was modified
+            Navigator.pop(
+                context, true); // Return true to indicate document was modified
           },
         ),
         title: _isEditingTitle
@@ -3223,13 +2962,11 @@ class _ScannedDocumentOptionsPageState
 
 // ---------------- PROFILE PAGE ----------------
 class ProfilePage extends StatelessWidget {
-  final String name;
   final String phone;
   final String countryCode;
 
   ProfilePage({
     super.key,
-    required this.name,
     required this.countryCode,
     required this.phone,
   });
@@ -3274,41 +3011,6 @@ class ProfilePage extends StatelessWidget {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 48),
-
-            // Name
-            const Text(
-              'NAME',
-              style: TextStyle(
-                color: Color(0xff133223),
-                letterSpacing: 2,
-                fontSize: 16,
-                fontWeight: FontWeight.w500,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(vertical: 26),
-              alignment: Alignment.center,
-              decoration: BoxDecoration(
-                color: const Color(0xffc7ffbf),
-                borderRadius: BorderRadius.zero,
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withOpacity(0.1),
-                    blurRadius: 4,
-                    spreadRadius: 1,
-                    offset: const Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: Text(
-                name,
-                style: const TextStyle(fontSize: 18, color: Color(0xff133223)),
-              ),
-            ),
-
-            const SizedBox(height: 54),
 
             // Phone
             const Text(
@@ -3356,7 +3058,7 @@ class ProfilePage extends StatelessWidget {
 
                   Navigator.pushAndRemoveUntil(
                     context,
-                    MaterialPageRoute(builder: (_) => const SignUpScreen()),
+                    MaterialPageRoute(builder: (_) => const PhoneAuthScreen()),
                     (route) => false,
                   );
                 },

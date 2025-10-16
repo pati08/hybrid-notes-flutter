@@ -8,7 +8,7 @@ class DocumentCard extends StatefulWidget {
   final String documentId;
   final String title;
   final bool isCreateNew;
-  final VoidCallback onTap;
+  final Function(Rect previewRect, Uint8List? previewImage)? onTap;
   final VoidCallback? onDelete;
   final int refreshKey;
   final bool wasModified;
@@ -35,6 +35,7 @@ class _DocumentCardState extends State<DocumentCard> {
   bool _isLoadingPreview = false;
   bool _hasError = false;
   String? _currentDocumentId; // Track the document ID for the current preview
+  final GlobalKey _previewKey = GlobalKey();
 
   @override
   void initState() {
@@ -110,10 +111,30 @@ class _DocumentCardState extends State<DocumentCard> {
     }
   }
 
+  void _handleTap() {
+    if (_previewKey.currentContext != null) {
+      final RenderBox renderBox = _previewKey.currentContext!.findRenderObject() as RenderBox;
+      final position = renderBox.localToGlobal(Offset.zero);
+      final size = renderBox.size;
+      final previewRect = Rect.fromLTWH(position.dx, position.dy, size.width, size.height);
+      
+      widget.onTap!(previewRect, _previewBytes);
+    } else {
+      // Fallback if we can't get the bounds
+      widget.onTap!(Rect.zero, _previewBytes);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
-      onTap: widget.onTap,
+      onTap: () {
+        if (widget.isCreateNew) {
+          widget.onTap?.call(Rect.zero, null);
+        } else {
+          _handleTap();
+        }
+      },
       child: Container(
         decoration: const BoxDecoration(
           color: Color(0xfff0f0f0),
@@ -184,6 +205,7 @@ class _DocumentCardState extends State<DocumentCard> {
         // Preview area
         Flexible(
           child: Container(
+            key: _previewKey,
             width: double.infinity,
             height: 120, // Fixed height for preview
             decoration: BoxDecoration(

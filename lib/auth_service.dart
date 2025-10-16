@@ -170,10 +170,30 @@ class AuthService {
         },
       );
 
-      if (response.statusCode != 200) {
+      if (response.statusCode == 400) {
         return AttachmentUploadResult(
           success: false,
-          error: 'Failed to get upload URL: ${response.statusCode}',
+          error: 'Something went wrong while uploading the file, please try again later',
+        );
+      } else if (response.statusCode == 401) {
+        return AttachmentUploadResult(
+          success: false,
+          error: 'Please log back in or try the code again',
+        );
+      } else if (response.statusCode == 403) {
+        return AttachmentUploadResult(
+          success: false,
+          error: 'Something went wrong while uploading the file, please try again later',
+        );
+      } else if (response.statusCode == 500) {
+        return AttachmentUploadResult(
+          success: false,
+          error: 'Something went wrong while uploading the file, please try again later',
+        );
+      } else if (response.statusCode != 200) {
+        return AttachmentUploadResult(
+          success: false,
+          error: 'Something went wrong while uploading the file, please try again later',
         );
       }
 
@@ -210,8 +230,7 @@ class AuthService {
       } else {
         return AttachmentUploadResult(
           success: false,
-          error:
-              'Upload failed: ${uploadResponse.statusCode} - ${uploadResponse.body}',
+          error: 'Something went wrong while uploading the file, please try again later',
         );
       }
     } catch (e) {
@@ -230,10 +249,30 @@ class AuthService {
       final response = await makeAuthenticatedRequest(
           '/api/attachments/download/$attachmentId?expires_in=$expiresIn');
 
-      if (response.statusCode != 200) {
+      if (response.statusCode == 400) {
         return AttachmentDownloadResult(
           success: false,
-          error: 'Failed to get download URL: ${response.statusCode}',
+          error: 'Something went wrong while downloading the file, please try again later',
+        );
+      } else if (response.statusCode == 401) {
+        return AttachmentDownloadResult(
+          success: false,
+          error: 'Please log back in or try the code again',
+        );
+      } else if (response.statusCode == 403) {
+        return AttachmentDownloadResult(
+          success: false,
+          error: 'Something went wrong while downloading the file, please try again later',
+        );
+      } else if (response.statusCode == 500) {
+        return AttachmentDownloadResult(
+          success: false,
+          error: 'Something went wrong while downloading the file, please try again later',
+        );
+      } else if (response.statusCode != 200) {
+        return AttachmentDownloadResult(
+          success: false,
+          error: 'Something went wrong while downloading the file, please try again later',
         );
       }
 
@@ -262,7 +301,7 @@ class AuthService {
       } else {
         return AttachmentDownloadResult(
           success: false,
-          error: 'Download failed: ${downloadResponse.statusCode}',
+          error: 'Something went wrong while downloading the file, please try again later',
         );
       }
     } catch (e) {
@@ -300,10 +339,30 @@ class AuthService {
           success: true,
           document: data,
         );
+      } else if (response.statusCode == 400) {
+        return DocumentResult(
+          success: false,
+          error: 'Something went wrong while creating the document, please try again later',
+        );
+      } else if (response.statusCode == 401) {
+        return DocumentResult(
+          success: false,
+          error: 'Please log back in or try the code again',
+        );
+      } else if (response.statusCode == 403) {
+        return DocumentResult(
+          success: false,
+          error: 'Something went wrong while creating the document, please try again later',
+        );
+      } else if (response.statusCode == 500) {
+        return DocumentResult(
+          success: false,
+          error: 'Something went wrong while creating the document, please try again later',
+        );
       } else {
         return DocumentResult(
           success: false,
-          error: 'Failed to create document: ${response.statusCode}',
+          error: 'Something went wrong while creating the document, please try again later',
         );
       }
     } catch (e) {
@@ -329,17 +388,32 @@ class AuthService {
       } else if (response.statusCode == 403) {
         return DocumentResult(
           success: false,
-          error: 'Not authorized to access this document',
+          error: 'Something went wrong while accessing this document, please try again later',
+        );
+      } else if (response.statusCode == 400) {
+        return DocumentResult(
+          success: false,
+          error: 'Something went wrong while loading the document, please try again later',
+        );
+      } else if (response.statusCode == 401) {
+        return DocumentResult(
+          success: false,
+          error: 'Please log back in or try the code again',
         );
       } else if (response.statusCode == 404) {
         return DocumentResult(
           success: false,
-          error: 'Document not found',
+          error: 'Something went wrong while loading the document, please try again later',
+        );
+      } else if (response.statusCode == 500) {
+        return DocumentResult(
+          success: false,
+          error: 'Something went wrong while loading the document, please try again later',
         );
       } else {
         return DocumentResult(
           success: false,
-          error: 'Failed to get document: ${response.statusCode}',
+          error: 'Something went wrong while loading the document, please try again later',
         );
       }
     } catch (e) {
@@ -413,13 +487,33 @@ class AuthService {
         } else {
           return DocumentListResult(
             success: false,
-            error: 'Invalid response format',
+            error: 'Something went wrong while loading documents, please try again later',
           );
         }
+      } else if (response.statusCode == 400) {
+        return DocumentListResult(
+          success: false,
+          error: 'Something went wrong while loading documents, please try again later',
+        );
+      } else if (response.statusCode == 401) {
+        return DocumentListResult(
+          success: false,
+          error: 'Please log back in or try the code again',
+        );
+      } else if (response.statusCode == 403) {
+        return DocumentListResult(
+          success: false,
+          error: 'Something went wrong while loading documents, please try again later',
+        );
+      } else if (response.statusCode == 500) {
+        return DocumentListResult(
+          success: false,
+          error: 'Something went wrong while loading documents, please try again later',
+        );
       } else {
         return DocumentListResult(
           success: false,
-          error: 'Failed to list documents: ${response.statusCode}',
+          error: 'Something went wrong while loading documents, please try again later',
         );
       }
     } catch (e) {
@@ -448,23 +542,38 @@ class AuthService {
         } else {
           return DrawingListResult(
             success: false,
-            error: 'Invalid response format',
+            error: 'Something went wrong while loading the drawing list, please try again later',
           );
         }
+      } else if (response.statusCode == 400) {
+        return DrawingListResult(
+          success: false,
+          error: 'Something went wrong while loading the drawing list, please try again later',
+        );
+      } else if (response.statusCode == 401) {
+        return DrawingListResult(
+          success: false,
+          error: 'Please log back in or try the code again',
+        );
       } else if (response.statusCode == 403) {
         return DrawingListResult(
           success: false,
-          error: 'Not authorized to access this document',
+          error: 'Something went wrong while loading the drawing list, please try again later',
         );
       } else if (response.statusCode == 404) {
         return DrawingListResult(
           success: false,
-          error: 'Drawing list not found',
+          error: 'Something went wrong while loading the drawing list, please try again later',
+        );
+      } else if (response.statusCode == 500) {
+        return DrawingListResult(
+          success: false,
+          error: 'Something went wrong while loading the drawing list, please try again later',
         );
       } else {
         return DrawingListResult(
           success: false,
-          error: 'Failed to get drawing list: ${response.statusCode}',
+          error: 'Something went wrong while loading the drawing list, please try again later',
         );
       }
     } catch (e) {
@@ -564,20 +673,20 @@ class AuthService {
         case 400:
           return AuthResult(
             success: false,
-            error: data['error'] ?? 'Formatted number wrong (my fault)',
+            error: data['error'] ?? 'Something went wrong while processing your request, please try again later',
             statusCode: response.statusCode,
           );
         case 401:
           return AuthResult(
             success: false,
             error: data['error'] ??
-                'They gave wrong code. Ask for right code again.',
+                'Please log back in or try the code again',
             statusCode: response.statusCode,
           );
         case 500:
           return AuthResult(
             success: false,
-            error: data['error'] ?? 'Server error, something went wrong',
+            error: data['error'] ?? 'Something went wrong while processing your request, please try again later',
             statusCode: response.statusCode,
           );
         default:
