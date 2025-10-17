@@ -33,6 +33,10 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
   // Drawing state
   final List<DrawingPath> _paths = [];
   DrawingPath? _currentPath;
+  
+  // Shape drawing state
+  Offset? _shapeStartPoint;
+  Offset? _shapeCurrentPoint;
 
   @override
   void initState() {
@@ -149,8 +153,30 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
         return false;
       }
 
-      final tolerance = math.max(path.strokeWidth, eraserPath.strokeWidth);
+      // Make erasing more forgiving by increasing tolerance
+      final baseTolerance = math.max(path.strokeWidth, eraserPath.strokeWidth);
+      // Adjust tolerance based on zoom level - smaller tolerance when zoomed in
+      final currentScale = _transformationController.value.getMaxScaleOnAxis();
+      final zoomFactor = math.max(0.5, 1.0 / currentScale); // Invert scale, clamp to reasonable range
+      final tolerance = baseTolerance * 3.0 * zoomFactor; // Zoom-aware tolerance
 
+      // For shapes (squares, circles, lines), use bounding box collision
+      if (path.pathType == PathType.square || path.pathType == PathType.circle || path.pathType == PathType.line) {
+        if (path.startPoint != null && path.endPoint != null) {
+          // Create bounding box for the shape
+          final shapeBounds = _getShapeBounds(path);
+          if (shapeBounds != null) {
+            // Check if any eraser point is within the shape's bounding box (with tolerance)
+            for (final eraserPoint in eraserPoints) {
+              if (_isPointInBounds(eraserPoint, shapeBounds, tolerance)) {
+                return true;
+              }
+            }
+          }
+        }
+      }
+
+      // For freehand paths, use the improved point-based detection
       // Quick point proximity check (covers dots and very short segments)
       for (final pathPoint in path.points) {
         for (final eraserPoint in eraserPoints) {
@@ -201,6 +227,48 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
       return false;
     });
+  }
+
+  // Get bounding box for shapes
+  Rect? _getShapeBounds(DrawingPath path) {
+    if (path.startPoint == null || path.endPoint == null) return null;
+    
+    final start = path.startPoint!;
+    final end = path.endPoint!;
+    final strokeWidth = path.strokeWidth;
+    
+    // Add stroke width padding to the bounds
+    final padding = strokeWidth / 2;
+    
+    switch (path.pathType) {
+      case PathType.square:
+        return Rect.fromPoints(
+          Offset(math.min(start.dx, end.dx) - padding, math.min(start.dy, end.dy) - padding),
+          Offset(math.max(start.dx, end.dx) + padding, math.max(start.dy, end.dy) + padding),
+        );
+      case PathType.circle:
+        final center = Offset((start.dx + end.dx) / 2, (start.dy + end.dy) / 2);
+        final radius = (end - start).distance / 2 + padding;
+        return Rect.fromCircle(center: center, radius: radius);
+      case PathType.line:
+        return Rect.fromPoints(
+          Offset(math.min(start.dx, end.dx) - padding, math.min(start.dy, end.dy) - padding),
+          Offset(math.max(start.dx, end.dx) + padding, math.max(start.dy, end.dy) + padding),
+        );
+      default:
+        return null;
+    }
+  }
+
+  // Check if a point is within bounds with tolerance
+  bool _isPointInBounds(Offset point, Rect bounds, double tolerance) {
+    final expandedBounds = Rect.fromLTRB(
+      bounds.left - tolerance,
+      bounds.top - tolerance,
+      bounds.right + tolerance,
+      bounds.bottom + tolerance,
+    );
+    return expandedBounds.contains(point);
   }
 
   double _distancePointToSegment(Offset point, Offset segmentStart, Offset segmentEnd) {
@@ -353,10 +421,12 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
           Container(
             padding: const EdgeInsets.all(8.0),
             decoration: BoxDecoration(
-              color: Colors.grey[200],
+              color: _mode == DrawingMode.erase ? Colors.red[50] : Colors.grey[200],
               boxShadow: [
                 BoxShadow(
-                  color: Colors.black.withOpacity(0.25),
+                  color: _mode == DrawingMode.erase 
+                      ? Colors.red.withOpacity(0.25)
+                      : Colors.black.withOpacity(0.25),
                   blurRadius: 8,
                   spreadRadius: 1,
                   offset: const Offset(0, 4),
@@ -398,7 +468,7 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                   IconButton(
                     icon: Icon(
                       Icons.cleaning_services,
-                      color: _mode == DrawingMode.erase ? Colors.blue : null,
+                      color: _mode == DrawingMode.erase ? Colors.red : null,
                     ),
                     onPressed: () {
                       setState(() {
@@ -406,6 +476,54 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                       });
                     },
                     tooltip: 'Eraser',
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      Icons.highlight,
+                      color: _mode == DrawingMode.highlight ? Colors.blue : null,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _mode = DrawingMode.highlight;
+                      });
+                    },
+                    tooltip: 'Highlight',
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      Icons.crop_square,
+                      color: _mode == DrawingMode.square ? Colors.blue : null,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _mode = DrawingMode.square;
+                      });
+                    },
+                    tooltip: 'Square',
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      Icons.circle_outlined,
+                      color: _mode == DrawingMode.circle ? Colors.blue : null,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _mode = DrawingMode.circle;
+                      });
+                    },
+                    tooltip: 'Circle',
+                  ),
+                  IconButton(
+                    icon: Icon(
+                      Icons.show_chart,
+                      color: _mode == DrawingMode.line ? Colors.blue : null,
+                    ),
+                    onPressed: () {
+                      setState(() {
+                        _mode = DrawingMode.line;
+                      });
+                    },
+                    tooltip: 'Line',
                   ),
                   const VerticalDivider(),
                   // Color picker
@@ -458,12 +576,42 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
                 final localPosition = renderBox.globalToLocal(details.globalPosition);
                 setState(() {
-                  _currentPath = DrawingPath(
-                    points: [localPosition],
-                    color: _mode == DrawingMode.erase ? Colors.transparent : _selectedColor,
-                    strokeWidth: _strokeWidth,
-                    mode: _mode,
-                  );
+                  if (_mode == DrawingMode.square || _mode == DrawingMode.circle || _mode == DrawingMode.line) {
+                    // For shapes, we store the start point and current point
+                    _shapeStartPoint = localPosition;
+                    _shapeCurrentPoint = localPosition;
+                    _currentPath = DrawingPath(
+                      points: [localPosition],
+                      color: _selectedColor,
+                      strokeWidth: _strokeWidth,
+                      mode: _mode,
+                      pathType: _mode == DrawingMode.square ? PathType.square :
+                               _mode == DrawingMode.circle ? PathType.circle : PathType.line,
+                      shapeTool: _mode == DrawingMode.square ? ShapeTool.square :
+                                _mode == DrawingMode.circle ? ShapeTool.circle : ShapeTool.line,
+                      startPoint: localPosition,
+                      endPoint: localPosition,
+                    );
+                  } else {
+                    // For freehand drawing, erasing, and highlighting
+                    _currentPath = DrawingPath(
+                      points: [localPosition],
+                      color: _mode == DrawingMode.erase 
+                          ? Colors.transparent 
+                          : _mode == DrawingMode.highlight 
+                              ? Colors.yellow  // Use yellow for highlighting
+                              : _selectedColor,
+                      strokeWidth: _mode == DrawingMode.highlight 
+                          ? _strokeWidth * 2 
+                          : _mode == DrawingMode.erase 
+                              ? _strokeWidth * 1.5  // Make eraser slightly thicker for better coverage
+                              : _strokeWidth,
+                      mode: _mode,
+                      pathType: _mode == DrawingMode.draw ? PathType.draw : 
+                               _mode == DrawingMode.erase ? PathType.erase : PathType.highlight,
+                    );
+                  }
+                  debugPrint('Created path with mode: ${_mode.name}, pathType: ${_currentPath!.pathType.name}');
                 });
               },
               onPanUpdate: (details) {
@@ -474,24 +622,33 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 
                 final localPosition = renderBox.globalToLocal(details.globalPosition);
                 setState(() {
-                  // Add adaptive point sampling to reduce segmentation
-                  final currentPoints = _currentPath!.points;
-                  if (currentPoints.isNotEmpty) {
-                    final lastPoint = currentPoints.last;
-                    final distance = (localPosition - lastPoint).distance;
-                    
-                    // Only add point if it's far enough from the last point
-                    // This reduces segmentation during fast strokes
-                    if (distance > 2.0) {
+                  if (_mode == DrawingMode.square || _mode == DrawingMode.circle || _mode == DrawingMode.line) {
+                    // For shapes, update the current point and end point
+                    _shapeCurrentPoint = localPosition;
+                    _currentPath = _currentPath!.copyWith(
+                      endPoint: localPosition,
+                    );
+                  } else {
+                    // For freehand drawing, erasing, and highlighting
+                    // Add adaptive point sampling to reduce segmentation
+                    final currentPoints = _currentPath!.points;
+                    if (currentPoints.isNotEmpty) {
+                      final lastPoint = currentPoints.last;
+                      final distance = (localPosition - lastPoint).distance;
+                      
+                      // Only add point if it's far enough from the last point
+                      // This reduces segmentation during fast strokes
+                      if (distance > 2.0) {
+                        _currentPath = _currentPath!.copyWith(
+                          points: [...currentPoints, localPosition],
+                        );
+                      }
+                    } else {
+                      // First point - always add it
                       _currentPath = _currentPath!.copyWith(
-                        points: [...currentPoints, localPosition],
+                        points: [localPosition],
                       );
                     }
-                  } else {
-                    // First point - always add it
-                    _currentPath = _currentPath!.copyWith(
-                      points: [localPosition],
-                    );
                   }
                 });
               },
@@ -502,9 +659,12 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                   if (_currentPath!.mode == DrawingMode.erase) {
                     _erasePaths(_currentPath!);
                   } else {
+                    // Add draw, highlight, and shape paths
                     _paths.add(_currentPath!);
                   }
                   _currentPath = null;
+                  _shapeStartPoint = null;
+                  _shapeCurrentPoint = null;
                 });
               },
               child: Container(
@@ -522,6 +682,47 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
               ),
             ),
           ),
+          
+          // Erase mode indicator
+          if (_mode == DrawingMode.erase)
+            Positioned(
+              top: 100,
+              left: 16,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.red,
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.3),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                      offset: const Offset(0, 2),
+                    ),
+                  ],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.cleaning_services,
+                      color: Colors.white,
+                      size: 16,
+                    ),
+                    const SizedBox(width: 8),
+                    const Text(
+                      'ERASE MODE',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
         ],
       ),
     );
@@ -647,6 +848,25 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
 enum DrawingMode {
   draw,
   erase,
+  highlight,
+  square,
+  circle,
+  line,
+}
+
+enum PathType {
+  draw,
+  erase,
+  highlight,
+  square,
+  circle,
+  line,
+}
+
+enum ShapeTool {
+  square,
+  circle,
+  line,
 }
 
 class DrawingPath {
@@ -654,12 +874,20 @@ class DrawingPath {
   final Color color;
   final double strokeWidth;
   final DrawingMode mode;
+  final PathType pathType;
+  final ShapeTool? shapeTool;
+  final Offset? startPoint;
+  final Offset? endPoint;
 
   DrawingPath({
     required this.points,
     required this.color,
     required this.strokeWidth,
     required this.mode,
+    required this.pathType,
+    this.shapeTool,
+    this.startPoint,
+    this.endPoint,
   });
 
   DrawingPath copyWith({
@@ -667,12 +895,20 @@ class DrawingPath {
     Color? color,
     double? strokeWidth,
     DrawingMode? mode,
+    PathType? pathType,
+    ShapeTool? shapeTool,
+    Offset? startPoint,
+    Offset? endPoint,
   }) {
     return DrawingPath(
       points: points ?? this.points,
       color: color ?? this.color,
       strokeWidth: strokeWidth ?? this.strokeWidth,
       mode: mode ?? this.mode,
+      pathType: pathType ?? this.pathType,
+      shapeTool: shapeTool ?? this.shapeTool,
+      startPoint: startPoint ?? this.startPoint,
+      endPoint: endPoint ?? this.endPoint,
     );
   }
 
@@ -686,6 +922,10 @@ class DrawingPath {
         'blue': ((color.b * 255.0).round() & 0xff),
       },
       'stroke_width': strokeWidth,
+      'path_type': pathType.name,
+      'shape_tool': shapeTool?.name,
+      'start_point': startPoint != null ? [startPoint!.dx, startPoint!.dy] : null,
+      'end_point': endPoint != null ? [endPoint!.dx, endPoint!.dy] : null,
     };
   }
 
@@ -705,11 +945,43 @@ class DrawingPath {
       colorMap['blue'] as int,
     );
 
+    // Parse path type from JSON, default to draw if not present
+    final pathTypeString = json['path_type'] as String? ?? 'draw';
+    final pathType = PathType.values.firstWhere(
+      (type) => type.name == pathTypeString,
+      orElse: () => PathType.draw,
+    );
+
+    // Parse shape tool from JSON
+    final shapeToolString = json['shape_tool'] as String?;
+    final shapeTool = shapeToolString != null 
+        ? ShapeTool.values.firstWhere(
+            (tool) => tool.name == shapeToolString,
+            orElse: () => ShapeTool.square,
+          )
+        : null;
+
+    // Parse start and end points for shapes
+    Offset? startPoint;
+    Offset? endPoint;
+    if (json['start_point'] != null) {
+      final startList = json['start_point'] as List<dynamic>;
+      startPoint = Offset(startList[0] as double, startList[1] as double);
+    }
+    if (json['end_point'] != null) {
+      final endList = json['end_point'] as List<dynamic>;
+      endPoint = Offset(endList[0] as double, endList[1] as double);
+    }
+
     return DrawingPath(
       points: points,
       color: color,
       strokeWidth: (json['stroke_width'] as num).toDouble(),
       mode: DrawingMode.draw, // Default to draw mode for loaded paths
+      pathType: pathType,
+      shapeTool: shapeTool,
+      startPoint: startPoint,
+      endPoint: endPoint,
     );
   }
 }
@@ -728,29 +1000,47 @@ class _SimplePathPainter extends CustomPainter {
   void paint(Canvas canvas, Size size) {
     // Draw completed paths
     for (final path in paths) {
+      final isHighlight = path.pathType == PathType.highlight;
       final paint = Paint()
-        ..color = path.color
-        ..strokeWidth = path.strokeWidth
+        ..color = isHighlight 
+            ? path.color.withOpacity(0.3) 
+            : path.color
+        ..strokeWidth = isHighlight 
+            ? path.strokeWidth * 3  // Make highlighting much thicker
+            : path.strokeWidth
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
         ..style = PaintingStyle.stroke;
 
-      if (path.points.isNotEmpty) {
+      if ((path.pathType == PathType.square || path.pathType == PathType.circle || path.pathType == PathType.line) && path.startPoint != null && path.endPoint != null) {
+        // Draw shapes
+        _drawShape(canvas, paint, path);
+      } else if (path.points.isNotEmpty) {
+        // Draw freehand paths
         final drawPath = _createSimplePath(path.points);
         canvas.drawPath(drawPath, paint);
+        debugPrint('Painting path: mode=${path.mode.name}, pathType=${path.pathType.name}, isHighlight=$isHighlight, opacity=${paint.color.opacity}');
       }
     }
 
     // Draw in-progress path
     if (inProgressPath != null) {
       final paint = Paint()
-        ..color = inProgressPath!.color
-        ..strokeWidth = inProgressPath!.strokeWidth
+        ..color = inProgressPath!.pathType == PathType.highlight 
+            ? inProgressPath!.color.withOpacity(0.3) 
+            : inProgressPath!.color
+        ..strokeWidth = inProgressPath!.pathType == PathType.highlight 
+            ? inProgressPath!.strokeWidth * 3  // Make highlighting much thicker
+            : inProgressPath!.strokeWidth
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
         ..style = PaintingStyle.stroke;
 
-      if (inProgressPath!.points.isNotEmpty) {
+      if ((inProgressPath!.pathType == PathType.square || inProgressPath!.pathType == PathType.circle || inProgressPath!.pathType == PathType.line) && inProgressPath!.startPoint != null && inProgressPath!.endPoint != null) {
+        // Draw in-progress shape
+        _drawShape(canvas, paint, inProgressPath!);
+      } else if (inProgressPath!.points.isNotEmpty) {
+        // Draw in-progress freehand path
         final drawPath = _createSimplePath(inProgressPath!.points);
         canvas.drawPath(drawPath, paint);
       }
@@ -772,6 +1062,32 @@ class _SimplePathPainter extends CustomPainter {
       path.lineTo(points[i].dx, points[i].dy);
     }
     return path;
+  }
+
+  /// Draws a shape based on the shape tool
+  void _drawShape(Canvas canvas, Paint paint, DrawingPath path) {
+    if (path.startPoint == null || path.endPoint == null || path.shapeTool == null) return;
+
+    final start = path.startPoint!;
+    final end = path.endPoint!;
+
+    switch (path.shapeTool!) {
+      case ShapeTool.square:
+        final rect = Rect.fromPoints(start, end);
+        canvas.drawRect(rect, paint);
+        break;
+      case ShapeTool.circle:
+        final center = Offset(
+          (start.dx + end.dx) / 2,
+          (start.dy + end.dy) / 2,
+        );
+        final radius = (end - start).distance / 2;
+        canvas.drawCircle(center, radius, paint);
+        break;
+      case ShapeTool.line:
+        canvas.drawLine(start, end, paint);
+        break;
+    }
   }
 
   @override
