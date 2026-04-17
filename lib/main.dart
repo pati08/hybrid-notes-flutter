@@ -1873,8 +1873,10 @@ class _DocumentPageState extends State<DocumentPage> {
           }
         }
 
-        // If no pages loaded, add an empty digital page
-        if (loadedPages.isEmpty) {
+        // If no pages loaded and no initial image pages, add an empty digital page
+        if (loadedPages.isEmpty &&
+            (widget.initialImagePages == null ||
+                widget.initialImagePages!.isEmpty)) {
           loadedPages.add(DocumentPageData.digital());
         }
 
