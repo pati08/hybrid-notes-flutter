@@ -185,8 +185,20 @@ class _PhoneAuthScreenState extends State<PhoneAuthScreen> {
       return;
     }
 
-    // Combine country code and phone number
-    final fullPhoneNumber = '+$countryCode$phoneNumber';
+    // Validate that the phone number contains exactly 10 digits
+    final digits = phoneNumber.replaceAll(RegExp(r'\D'), '');
+    if (digits.length != 10) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please enter a valid 10-digit phone number'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Combine country code and phone number (use raw digits only)
+    final fullPhoneNumber = '+$countryCode$digits';
 
     try {
       // Show loading indicator
@@ -602,6 +614,8 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
                   final result =
                       await authService.sendPhoneVerification(widget.phone);
 
+                  if (!context.mounted) return;
+
                   // Hide loading indicator
                   Navigator.pop(context);
 
@@ -658,17 +672,6 @@ class _CodeVerificationPageState extends State<CodeVerificationPage> {
       ),
     );
   }
-}
-
-http.Response returnJSON() {
-  final fakeBody = jsonEncode({
-    "documents": [
-      {"title": "Sample Doc 1"},
-      {"title": "Sample Doc 2"},
-    ],
-  });
-
-  return http.Response(fakeBody, 200); // Mimics a real HTTP response
 }
 
 // ---------------- HOME SCREEN ----------------
@@ -1000,60 +1003,6 @@ class _HomeScreenState extends State<HomeScreen> with RouteAware {
           ),
         );
       }
-    }
-  }
-
-  // Example method to upload an attachment
-  Future<void> uploadFileExample(List<int> fileBytes, String fileName) async {
-    try {
-      final authService = AuthService();
-      final result = await authService.uploadAttachment(fileName, fileBytes);
-
-      if (result.success) {
-        // Store attachmentId for later use
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Upload failed: ${result.error}'),
-            backgroundColor: const Color(0xffbd6051),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Upload error: $e'),
-          backgroundColor: const Color(0xffbd6051),
-        ),
-      );
-    }
-  }
-
-  // Example method to download an attachment
-  Future<void> downloadFileExample(String attachmentId) async {
-    try {
-      final authService = AuthService();
-      final result = await authService.downloadAttachment(attachmentId);
-
-      if (result.success) {
-        // Use result.fileBytes for the downloaded file
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Download failed: ${result.error}'),
-            backgroundColor: const Color(0xffbd6051),
-            duration: const Duration(seconds: 2),
-          ),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Download error: $e'),
-          backgroundColor: const Color(0xffbd6051),
-        ),
-      );
     }
   }
 
@@ -1668,14 +1617,7 @@ class _CompactToolbarState extends State<CompactToolbar> {
   }
 
   void _toggleFormat(ParchmentAttribute attribute) {
-    final selection = widget.controller.selection;
-    if (selection.isCollapsed) {
-      // Apply format to the current selection or insert at cursor
-      widget.controller.formatSelection(attribute);
-    } else {
-      // Toggle format for selected text
-      widget.controller.formatSelection(attribute);
-    }
+    widget.controller.formatSelection(attribute);
   }
 
   void _showLinkDialog() {
@@ -2476,18 +2418,6 @@ class _DocumentPageState extends State<DocumentPage> {
     );
   }
 
-  String _formatSaveTime(DateTime time) {
-    final now = DateTime.now();
-    final diff = now.difference(time);
-
-    if (diff.inSeconds < 60) {
-      return 'just now';
-    } else if (diff.inMinutes < 60) {
-      return '${diff.inMinutes}m ago';
-    } else {
-      return '${time.hour}:${time.minute.toString().padLeft(2, '0')}';
-    }
-  }
 }
 
 // ---------------- SCANNED DOCUMENT OPTIONS PAGE ----------------
@@ -3143,7 +3073,9 @@ class _ImagesPageState extends State<ImagesPage> {
                   Uint8List.fromList(result.fileBytes!);
             });
           }
-        } catch (e) {}
+        } catch (e) {
+          debugPrint('Error loading image $attachmentId: $e');
+        }
       }
     }
   }

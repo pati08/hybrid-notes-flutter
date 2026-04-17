@@ -33,7 +33,11 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
   // Drawing state
   final List<DrawingPath> _paths = [];
   DrawingPath? _currentPath;
-  
+
+  // Undo/redo stacks — each entry is a snapshot of _paths
+  final List<List<DrawingPath>> _undoStack = [];
+  final List<List<DrawingPath>> _redoStack = [];
+
   // Shape drawing state
   Offset? _shapeStartPoint;
   Offset? _shapeCurrentPoint;
@@ -119,25 +123,42 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
         }
       }
     } catch (e) {
-      // Error loading paths
+      debugPrint('Error loading drawing paths: $e');
+    }
+  }
+
+  void _saveToHistory() {
+    _undoStack.add(List.from(_paths));
+    _redoStack.clear();
+    // Cap history at 50 states to limit memory usage
+    if (_undoStack.length > 50) {
+      _undoStack.removeAt(0);
     }
   }
 
   void _undo() {
-    debugPrint('UNDO: Undo button pressed');
-    debugPrint('UNDO: Current paths count: ${_paths.length}');
+    if (_undoStack.isEmpty) return;
+    _redoStack.add(List.from(_paths));
+    setState(() {
+      _paths
+        ..clear()
+        ..addAll(_undoStack.removeLast());
+    });
   }
 
   void _redo() {
-    debugPrint('REDO: Redo button pressed');
-    debugPrint('REDO: Current paths count: ${_paths.length}');
+    if (_redoStack.isEmpty) return;
+    _undoStack.add(List.from(_paths));
+    setState(() {
+      _paths
+        ..clear()
+        ..addAll(_redoStack.removeLast());
+    });
   }
 
   void _clear() {
-    if (_paths.isEmpty) {
-      return;
-    }
-
+    if (_paths.isEmpty) return;
+    _saveToHistory();
     setState(() {
       _paths.clear();
       _currentPath = null;
@@ -415,8 +436,10 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
           ),
         ],
       ),
-      body: Column(
+      body: Stack(
         children: [
+          Column(
+            children: [
           // Toolbar
           Container(
             padding: const EdgeInsets.all(8.0),
@@ -424,9 +447,9 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
               color: _mode == DrawingMode.erase ? Colors.red[50] : Colors.grey[200],
               boxShadow: [
                 BoxShadow(
-                  color: _mode == DrawingMode.erase 
-                      ? Colors.red.withOpacity(0.25)
-                      : Colors.black.withOpacity(0.25),
+                  color: _mode == DrawingMode.erase
+                      ? Colors.red.withValues(alpha: 0.25)
+                      : Colors.black.withValues(alpha: 0.25),
                   blurRadius: 8,
                   spreadRadius: 1,
                   offset: const Offset(0, 4),
@@ -439,12 +462,12 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                 children: [
                   IconButton(
                     icon: const Icon(Icons.undo),
-                    onPressed: _undo,
+                    onPressed: _undoStack.isNotEmpty ? _undo : null,
                     tooltip: 'Undo',
                   ),
                   IconButton(
                     icon: const Icon(Icons.redo),
-                    onPressed: _redo,
+                    onPressed: _redoStack.isNotEmpty ? _redo : null,
                     tooltip: 'Redo',
                   ),
                   IconButton(
@@ -611,7 +634,6 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                                _mode == DrawingMode.erase ? PathType.erase : PathType.highlight,
                     );
                   }
-                  debugPrint('Created path with mode: ${_mode.name}, pathType: ${_currentPath!.pathType.name}');
                 });
               },
               onPanUpdate: (details) {
@@ -655,6 +677,7 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
               onPanEnd: (details) {
                 if (_currentPath == null) return;
 
+                _saveToHistory();
                 setState(() {
                   if (_currentPath!.mode == DrawingMode.erase) {
                     _erasePaths(_currentPath!);
@@ -682,8 +705,9 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
               ),
             ),
           ),
-          
-          // Erase mode indicator
+        ],
+          ),
+          // Erase mode indicator — floats over the canvas via Stack
           if (_mode == DrawingMode.erase)
             Positioned(
               top: 100,
@@ -695,23 +719,23 @@ class _ImageDrawingScreenState extends State<ImageDrawingScreen> {
                   borderRadius: BorderRadius.circular(20),
                   boxShadow: [
                     BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
+                      color: Colors.black.withValues(alpha: 0.3),
                       blurRadius: 8,
                       spreadRadius: 1,
                       offset: const Offset(0, 2),
                     ),
                   ],
                 ),
-                child: Row(
+                child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.cleaning_services,
                       color: Colors.white,
                       size: 16,
                     ),
-                    const SizedBox(width: 8),
-                    const Text(
+                    SizedBox(width: 8),
+                    Text(
                       'ERASE MODE',
                       style: TextStyle(
                         color: Colors.white,
@@ -1002,11 +1026,11 @@ class _SimplePathPainter extends CustomPainter {
     for (final path in paths) {
       final isHighlight = path.pathType == PathType.highlight;
       final paint = Paint()
-        ..color = isHighlight 
-            ? path.color.withOpacity(0.3) 
+        ..color = isHighlight
+            ? path.color.withValues(alpha: 0.3)
             : path.color
-        ..strokeWidth = isHighlight 
-            ? path.strokeWidth * 3  // Make highlighting much thicker
+        ..strokeWidth = isHighlight
+            ? path.strokeWidth * 3
             : path.strokeWidth
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
@@ -1019,18 +1043,17 @@ class _SimplePathPainter extends CustomPainter {
         // Draw freehand paths
         final drawPath = _createSimplePath(path.points);
         canvas.drawPath(drawPath, paint);
-        debugPrint('Painting path: mode=${path.mode.name}, pathType=${path.pathType.name}, isHighlight=$isHighlight, opacity=${paint.color.opacity}');
       }
     }
 
     // Draw in-progress path
     if (inProgressPath != null) {
       final paint = Paint()
-        ..color = inProgressPath!.pathType == PathType.highlight 
-            ? inProgressPath!.color.withOpacity(0.3) 
+        ..color = inProgressPath!.pathType == PathType.highlight
+            ? inProgressPath!.color.withValues(alpha: 0.3)
             : inProgressPath!.color
-        ..strokeWidth = inProgressPath!.pathType == PathType.highlight 
-            ? inProgressPath!.strokeWidth * 3  // Make highlighting much thicker
+        ..strokeWidth = inProgressPath!.pathType == PathType.highlight
+            ? inProgressPath!.strokeWidth * 3
             : inProgressPath!.strokeWidth
         ..strokeCap = StrokeCap.round
         ..strokeJoin = StrokeJoin.round
