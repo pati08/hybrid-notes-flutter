@@ -609,7 +609,7 @@ class AuthService {
       );
 
       return response.statusCode == 200;
-    } catch (e, stackTrace) {
+    } catch (e) {
       return false;
     }
   }
@@ -697,7 +697,7 @@ class AuthService {
             statusCode: response.statusCode,
           );
       }
-    } on FormatException catch (e) {
+    } on FormatException {
       // JSON parsing failed - for 200 responses, treat as success if body is empty
       if (response.statusCode == 200) {
         return AuthResult(

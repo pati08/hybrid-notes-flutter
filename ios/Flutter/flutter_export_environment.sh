@@ -1,7 +1,7 @@
 #!/bin/sh
 # This is a generated file; do not edit or check into version control.
-export "FLUTTER_ROOT=/nix/store/xkw19jiw1qv7sxbmy7gp16p980kgq9wk-flutter-wrapped-3.35.4-sdk-links"
-export "FLUTTER_APPLICATION_PATH=/home/patrick/Coding/flutter/projects/hybrid-notes-flutter"
+export "FLUTTER_ROOT=/home/patrick/.flutter-sdk-2/flutter"
+export "FLUTTER_APPLICATION_PATH=/home/patrick/Coding/flutter/hybrid-notes-flutter"
 export "COCOAPODS_PARALLEL_CODE_SIGN=true"
 export "FLUTTER_TARGET=lib/main.dart"
 export "FLUTTER_BUILD_DIR=build"
